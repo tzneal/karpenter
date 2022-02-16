@@ -27,7 +27,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	testclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
+	fakekubeclient "knative.dev/pkg/client/injection/kube/client/fake"
 )
 
 func BenchmarkPacker(b *testing.B) {
@@ -39,7 +39,7 @@ func BenchmarkPacker(b *testing.B) {
 		instanceTypeNames = append(instanceTypeNames, it.Name())
 	}
 
-	kubeClient := testclient.NewClientBuilder().WithLists(&appsv1.DaemonSetList{}).Build()
+	ctx, kubeClient := fakekubeclient.With(ctx, &appsv1.DaemonSetList{})
 	fakeCloud := fake.CloudProvider{InstanceTypes: instanceTypes}
 	packer := binpacking.NewPacker(kubeClient, &fakeCloud)
 

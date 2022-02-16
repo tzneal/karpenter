@@ -25,8 +25,8 @@ import (
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/logging"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -46,7 +46,7 @@ func init() {
 }
 
 type Scheduler struct {
-	KubeClient client.Client
+	KubeClient kubernetes.Interface
 	Topology   *Topology
 }
 
@@ -56,7 +56,7 @@ type Schedule struct {
 	Pods []*v1.Pod
 }
 
-func NewScheduler(kubeClient client.Client) *Scheduler {
+func NewScheduler(kubeClient kubernetes.Interface) *Scheduler {
 	return &Scheduler{
 		KubeClient: kubeClient,
 		Topology:   &Topology{kubeClient: kubeClient},

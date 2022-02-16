@@ -26,14 +26,14 @@ import (
 	"github.com/aws/karpenter/pkg/utils/pod"
 	"github.com/mitchellh/hashstructure/v2"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	"k8s.io/client-go/kubernetes"
 )
 
 type Topology struct {
-	kubeClient client.Client
+	kubeClient kubernetes.Interface
 }
 
 // Inject injects topology rules into pods using supported NodeSelectors
@@ -119,16 +119,17 @@ func (t *Topology) computeZonalTopology(ctx context.Context, constraints *v1alph
 }
 
 func (t *Topology) countMatchingPods(ctx context.Context, topologyGroup *TopologyGroup) error {
-	pods := &v1.PodList{}
-	if err := t.kubeClient.List(ctx, pods, TopologyListOptions(topologyGroup.Pods[0].Namespace, &topologyGroup.Constraint)); err != nil {
+	pods, err := t.kubeClient.CoreV1().Pods(topologyGroup.Pods[0].Namespace).List(ctx,
+		TopologyListOptions(&topologyGroup.Constraint))
+	if err != nil {
 		return fmt.Errorf("listing pods, %w", err)
 	}
 	for i, p := range pods.Items {
 		if IgnoredForTopology(&pods.Items[i]) {
 			continue
 		}
-		node := &v1.Node{}
-		if err := t.kubeClient.Get(ctx, types.NamespacedName{Name: p.Spec.NodeName}, node); err != nil {
+		node, err := t.kubeClient.CoreV1().Nodes().Get(ctx, p.Spec.NodeName, metav1.GetOptions{})
+		if err != nil {
 			return fmt.Errorf("getting node %s, %w", p.Spec.NodeName, err)
 		}
 		domain, ok := node.Labels[topologyGroup.Constraint.TopologyKey]
@@ -140,11 +141,13 @@ func (t *Topology) countMatchingPods(ctx context.Context, topologyGroup *Topolog
 	return nil
 }
 
-func TopologyListOptions(namespace string, constraint *v1.TopologySpreadConstraint) *client.ListOptions {
+func TopologyListOptions(constraint *v1.TopologySpreadConstraint) metav1.ListOptions {
 	selector := labels.Everything()
 	if constraint.LabelSelector == nil {
-		return &client.ListOptions{Namespace: namespace, LabelSelector: selector}
+		// (todd): check if this selector.String() is correct
+		return metav1.ListOptions{LabelSelector: selector.String()}
 	}
+	selector.String()
 	for key, value := range constraint.LabelSelector.MatchLabels {
 		requirement, _ := labels.NewRequirement(key, selection.Equals, []string{value})
 		selector = selector.Add(*requirement)
@@ -153,7 +156,8 @@ func TopologyListOptions(namespace string, constraint *v1.TopologySpreadConstrai
 		requirement, _ := labels.NewRequirement(expression.Key, selection.Operator(expression.Operator), expression.Values)
 		selector = selector.Add(*requirement)
 	}
-	return &client.ListOptions{Namespace: namespace, LabelSelector: selector}
+	// (todd): check if this selector.String() is correct
+	return metav1.ListOptions{LabelSelector: selector.String()}
 }
 
 func IgnoredForTopology(p *v1.Pod) bool {

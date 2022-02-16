@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	"github.com/aws/karpenter/pkg/cloudprovider"
 	"github.com/aws/karpenter/pkg/controllers/provisioning/binpacking"
 	"github.com/aws/karpenter/pkg/controllers/provisioning/scheduling"
@@ -31,14 +32,13 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/workqueue"
 	"knative.dev/pkg/logging"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
-func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kubeClient client.Client, coreV1Client corev1.CoreV1Interface, cloudProvider cloudprovider.CloudProvider) *Provisioner {
+func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kubeClient kubernetes.Interface, coreV1Client *versioned.Clientset, cloudProvider cloudprovider.CloudProvider) *Provisioner {
 	running, stop := context.WithCancel(ctx)
 	p := &Provisioner{
 		Provisioner:   provisioner,
@@ -46,7 +46,7 @@ func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kube
 		Stop:          stop,
 		cloudProvider: cloudProvider,
 		kubeClient:    kubeClient,
-		coreV1Client:  coreV1Client,
+		karpClient:    coreV1Client,
 		scheduler:     scheduling.NewScheduler(kubeClient),
 		packer:        binpacking.NewPacker(kubeClient, cloudProvider),
 	}
@@ -69,8 +69,8 @@ type Provisioner struct {
 	Stop    context.CancelFunc
 	// Dependencies
 	cloudProvider cloudprovider.CloudProvider
-	kubeClient    client.Client
-	coreV1Client  corev1.CoreV1Interface
+	kubeClient    kubernetes.Interface
+	karpClient    *versioned.Clientset
 	scheduler     *scheduling.Scheduler
 	packer        *binpacking.Packer
 }
@@ -130,8 +130,8 @@ func (p *Provisioner) provision(ctx context.Context) (err error) {
 // between the time it was ingested into the scheduler and the time it is included
 // in a provisioner batch.
 func (p *Provisioner) isProvisionable(ctx context.Context, candidate *v1.Pod) (bool, error) {
-	stored := &v1.Pod{}
-	if err := p.kubeClient.Get(ctx, client.ObjectKeyFromObject(candidate), stored); err != nil {
+	stored, err := p.kubeClient.CoreV1().Pods(candidate.Namespace).Get(ctx, candidate.GetName(), metav1.GetOptions{})
+	if err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
@@ -142,8 +142,8 @@ func (p *Provisioner) isProvisionable(ctx context.Context, candidate *v1.Pod) (b
 
 func (p *Provisioner) launch(ctx context.Context, constraints *v1alpha5.Constraints, packing *binpacking.Packing) error {
 	// Check limits
-	latest := &v1alpha5.Provisioner{}
-	if err := p.kubeClient.Get(ctx, client.ObjectKeyFromObject(p.Provisioner), latest); err != nil {
+	latest, err := p.karpClient.KarpenterV1alpha5().Provisioners(p.Provisioner.Namespace).Get(ctx, p.Provisioner.Name, metav1.GetOptions{})
+	if err != nil {
 		return fmt.Errorf("getting current resource usage, %w", err)
 	}
 	if err := p.Spec.Limits.ExceededBy(latest.Status.Resources); err != nil {
@@ -185,7 +185,7 @@ func (p *Provisioner) bind(ctx context.Context, node *v1.Node, pods []*v1.Pod) (
 	// with the API server. In the common case, we create the node object
 	// ourselves to enforce the binding decision and enable images to be pulled
 	// before the node is fully Ready.
-	if _, err := p.coreV1Client.Nodes().Create(ctx, node, metav1.CreateOptions{}); err != nil {
+	if _, err := p.kubeClient.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{}); err != nil {
 		if !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("creating node %s, %w", node.Name, err)
 		}
@@ -193,7 +193,7 @@ func (p *Provisioner) bind(ctx context.Context, node *v1.Node, pods []*v1.Pod) (
 	// Bind pods
 	var bound int64
 	workqueue.ParallelizeUntil(ctx, len(pods), len(pods), func(i int) {
-		if err := p.coreV1Client.Pods(pods[i].Namespace).Bind(ctx, &v1.Binding{TypeMeta: pods[i].TypeMeta, ObjectMeta: pods[i].ObjectMeta, Target: v1.ObjectReference{Name: node.Name}}, metav1.CreateOptions{}); err != nil {
+		if err := p.kubeClient.CoreV1().Pods(pods[i].Namespace).Bind(ctx, &v1.Binding{TypeMeta: pods[i].TypeMeta, ObjectMeta: pods[i].ObjectMeta, Target: v1.ObjectReference{Name: node.Name}}, metav1.CreateOptions{}); err != nil {
 			logging.FromContext(ctx).Errorf("Failed to bind %s/%s to %s, %s", pods[i].Namespace, pods[i].Name, node.Name, err)
 		} else {
 			atomic.AddInt64(&bound, 1)

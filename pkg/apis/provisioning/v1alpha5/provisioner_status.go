@@ -16,10 +16,13 @@ package v1alpha5
 import (
 	v1 "k8s.io/api/core/v1"
 	"knative.dev/pkg/apis"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 )
 
 // ProvisionerStatus defines the observed state of Provisioner
 type ProvisionerStatus struct {
+	duckv1.Status `json:",inline"`
+
 	// LastScaleTime is the last time the Provisioner scaled the number
 	// of nodes
 	// +optional

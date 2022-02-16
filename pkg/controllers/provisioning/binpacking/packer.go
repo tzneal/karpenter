@@ -27,10 +27,10 @@ import (
 	"github.com/aws/karpenter/pkg/utils/resources"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/prometheus/client_golang/prometheus"
-	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/logging"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -54,7 +54,7 @@ func init() {
 	crmetrics.Registry.MustRegister(packDuration)
 }
 
-func NewPacker(kubeClient client.Client, cloudProvider cloudprovider.CloudProvider) *Packer {
+func NewPacker(kubeClient kubernetes.Interface, cloudProvider cloudprovider.CloudProvider) *Packer {
 	return &Packer{
 		kubeClient:    kubeClient,
 		cloudProvider: cloudProvider,
@@ -63,7 +63,7 @@ func NewPacker(kubeClient client.Client, cloudProvider cloudprovider.CloudProvid
 
 // Packer packs pods and calculates efficient placement on the instances.
 type Packer struct {
-	kubeClient    client.Client
+	kubeClient    kubernetes.Interface
 	cloudProvider cloudprovider.CloudProvider
 }
 
@@ -140,8 +140,8 @@ func (p *Packer) Pack(ctx context.Context, constraints *v1alpha5.Constraints, po
 }
 
 func (p *Packer) getDaemons(ctx context.Context, constraints *v1alpha5.Constraints) ([]*v1.Pod, error) {
-	daemonSetList := &appsv1.DaemonSetList{}
-	if err := p.kubeClient.List(ctx, daemonSetList); err != nil {
+	daemonSetList, err := p.kubeClient.AppsV1().DaemonSets(v1.NamespaceAll).List(ctx, metav1.ListOptions{})
+	if err != nil {
 		return nil, fmt.Errorf("listing daemonsets, %w", err)
 	}
 	// Include DaemonSets that will schedule on this node

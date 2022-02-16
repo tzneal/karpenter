@@ -53,3 +53,13 @@ const (
 	// necessary API calls, and isn't disabled.
 	Active apis.ConditionType = "Active"
 )
+
+var (
+	// AddToScheme adds the types known to this package to an existing schema.
+	AddToScheme = SchemeBuilder.AddToScheme
+)
+
+// Resource takes an unqualified resource and returns a Group qualified GroupResource
+func Resource(resource string) schema.GroupResource {
+	return SchemeGroupVersion.WithResource(resource).GroupResource()
+}

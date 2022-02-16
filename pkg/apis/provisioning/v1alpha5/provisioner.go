@@ -16,6 +16,16 @@ package v1alpha5
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"knative.dev/pkg/apis"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
+)
+
+var (
+	// Check that Provisioner can be validated and defaulted.
+	_ apis.Validatable = (*Provisioner)(nil)
+	_ apis.Defaultable = (*Provisioner)(nil)
+	// Check that the type conforms to the duck Knative Resource shape.
+	_ duckv1.KRShaped = (*Provisioner)(nil)
 )
 
 // ProvisionerSpec is the top level provisioner specification. Provisioners
@@ -46,19 +56,35 @@ type ProvisionerSpec struct {
 }
 
 // Provisioner is the Schema for the Provisioners API
-// +kubebuilder:object:root=true
-// +kubebuilder:resource:path=provisioners,scope=Cluster
-// +kubebuilder:subresource:status
+//
+// +genclient
+// +genreconciler
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type Provisioner struct {
-	metav1.TypeMeta   `json:",inline"`
+	metav1.TypeMeta `json:",inline"`
+	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ProvisionerSpec   `json:"spec,omitempty"`
+	// +optional
+	Spec ProvisionerSpec `json:"spec,omitempty"`
+
+	// +optional
 	Status ProvisionerStatus `json:"status,omitempty"`
 }
 
+var condSet = apis.NewLivingConditionSet()
+
+func (p *Provisioner) GetConditionSet() apis.ConditionSet {
+	return condSet
+}
+
+// GetStatus retrieves the status of the resource. Implements the KRShaped interface.
+func (p *Provisioner) GetStatus() *duckv1.Status {
+	return &p.Status.Status
+}
+
 // ProvisionerList contains a list of Provisioner
-// +kubebuilder:object:root=true
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type ProvisionerList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
