@@ -71,6 +71,23 @@ group "Knative Codegen"
    --go-header-file "${REPO_ROOT_DIR}/hack/boilerplate.go.txt"
 
 
+OUTPUT_PKG="github.com/aws/karpenter/pkg/k8sgen" \
+VERSIONED_CLIENTSET_PKG="k8s.io/client-go/kubernetes" \
+EXTERNAL_INFORMER_PKG="k8s.io/client-go/informers" \
+"${KNATIVE_CODEGEN_PKG}/hack/generate-knative.sh" "injection" \
+  k8s.io/client-go \
+  k8s.io/api \
+ "core:v1" \
+  --go-header-file "${REPO_ROOT_DIR}/hack/boilerplate.go.txt" \
+  --force-genreconciler-kinds "Node,Pod,PersistentVolumeClaim"
+
+
+# ugh...
+find pkg/k8sgen/ -iname "*.go" -exec sed -i 's#github.com/aws/karpenter/pkg/k8sgen/client#knative.dev/pkg/client/injection/kube/client#' {} \;
+find pkg/k8sgen/ -iname "*.go" -exec sed -i 's#github.com/aws/karpenter/pkg/k8sgen/informers#knative.dev/pkg/client/injection/kube/informers#' {} \;
+rm -rf pkg/k8sgen/informers
+rm -rf pkg/k8sgen/client
+
 # Update deps post code-gen
 # TODO
 
