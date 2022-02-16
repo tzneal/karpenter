@@ -43,7 +43,7 @@ import (
 var ctx context.Context
 var provisioner *v1alpha5.Provisioner
 var provisioners *provisioning.Controller
-var selectionController *selection.Controller
+var selectionController *selection.Reconciler
 var env *test.Environment
 
 func TestAPIs(t *testing.T) {

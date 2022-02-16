@@ -31,7 +31,6 @@ import (
 // FakeProvisioners implements ProvisionerInterface
 type FakeProvisioners struct {
 	Fake *FakeKarpenterV1alpha5
-	ns   string
 }
 
 var provisionersResource = schema.GroupVersionResource{Group: "karpenter.sh", Version: "v1alpha5", Resource: "provisioners"}
@@ -41,8 +40,7 @@ var provisionersKind = schema.GroupVersionKind{Group: "karpenter.sh", Version: "
 // Get takes name of the provisioner, and returns the corresponding provisioner object, and an error if there is any.
 func (c *FakeProvisioners) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha5.Provisioner, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewGetAction(provisionersResource, c.ns, name), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootGetAction(provisionersResource, name), &v1alpha5.Provisioner{})
 	if obj == nil {
 		return nil, err
 	}
@@ -52,8 +50,7 @@ func (c *FakeProvisioners) Get(ctx context.Context, name string, options v1.GetO
 // List takes label and field selectors, and returns the list of Provisioners that match those selectors.
 func (c *FakeProvisioners) List(ctx context.Context, opts v1.ListOptions) (result *v1alpha5.ProvisionerList, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewListAction(provisionersResource, provisionersKind, c.ns, opts), &v1alpha5.ProvisionerList{})
-
+		Invokes(testing.NewRootListAction(provisionersResource, provisionersKind, opts), &v1alpha5.ProvisionerList{})
 	if obj == nil {
 		return nil, err
 	}
@@ -74,15 +71,13 @@ func (c *FakeProvisioners) List(ctx context.Context, opts v1.ListOptions) (resul
 // Watch returns a watch.Interface that watches the requested provisioners.
 func (c *FakeProvisioners) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewWatchAction(provisionersResource, c.ns, opts))
-
+		InvokesWatch(testing.NewRootWatchAction(provisionersResource, opts))
 }
 
 // Create takes the representation of a provisioner and creates it.  Returns the server's representation of the provisioner, and an error, if there is any.
 func (c *FakeProvisioners) Create(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.CreateOptions) (result *v1alpha5.Provisioner, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewCreateAction(provisionersResource, c.ns, provisioner), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootCreateAction(provisionersResource, provisioner), &v1alpha5.Provisioner{})
 	if obj == nil {
 		return nil, err
 	}
@@ -92,8 +87,7 @@ func (c *FakeProvisioners) Create(ctx context.Context, provisioner *v1alpha5.Pro
 // Update takes the representation of a provisioner and updates it. Returns the server's representation of the provisioner, and an error, if there is any.
 func (c *FakeProvisioners) Update(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.UpdateOptions) (result *v1alpha5.Provisioner, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateAction(provisionersResource, c.ns, provisioner), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootUpdateAction(provisionersResource, provisioner), &v1alpha5.Provisioner{})
 	if obj == nil {
 		return nil, err
 	}
@@ -104,8 +98,7 @@ func (c *FakeProvisioners) Update(ctx context.Context, provisioner *v1alpha5.Pro
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
 func (c *FakeProvisioners) UpdateStatus(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.UpdateOptions) (*v1alpha5.Provisioner, error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewUpdateSubresourceAction(provisionersResource, "status", c.ns, provisioner), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootUpdateSubresourceAction(provisionersResource, "status", provisioner), &v1alpha5.Provisioner{})
 	if obj == nil {
 		return nil, err
 	}
@@ -115,14 +108,13 @@ func (c *FakeProvisioners) UpdateStatus(ctx context.Context, provisioner *v1alph
 // Delete takes name of the provisioner and deletes it. Returns an error if one occurs.
 func (c *FakeProvisioners) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	_, err := c.Fake.
-		Invokes(testing.NewDeleteAction(provisionersResource, c.ns, name), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootDeleteAction(provisionersResource, name), &v1alpha5.Provisioner{})
 	return err
 }
 
 // DeleteCollection deletes a collection of objects.
 func (c *FakeProvisioners) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewDeleteCollectionAction(provisionersResource, c.ns, listOpts)
+	action := testing.NewRootDeleteCollectionAction(provisionersResource, listOpts)
 
 	_, err := c.Fake.Invokes(action, &v1alpha5.ProvisionerList{})
 	return err
@@ -131,8 +123,7 @@ func (c *FakeProvisioners) DeleteCollection(ctx context.Context, opts v1.DeleteO
 // Patch applies the patch and returns the patched provisioner.
 func (c *FakeProvisioners) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha5.Provisioner, err error) {
 	obj, err := c.Fake.
-		Invokes(testing.NewPatchSubresourceAction(provisionersResource, c.ns, name, pt, data, subresources...), &v1alpha5.Provisioner{})
-
+		Invokes(testing.NewRootPatchSubresourceAction(provisionersResource, name, pt, data, subresources...), &v1alpha5.Provisioner{})
 	if obj == nil {
 		return nil, err
 	}

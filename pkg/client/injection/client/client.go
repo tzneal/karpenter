@@ -109,22 +109,18 @@ func (w *wrapKarpenterV1alpha5) RESTClient() rest.Interface {
 	panic("RESTClient called on dynamic client!")
 }
 
-func (w *wrapKarpenterV1alpha5) Provisioners(namespace string) typedkarpenterv1alpha5.ProvisionerInterface {
+func (w *wrapKarpenterV1alpha5) Provisioners() typedkarpenterv1alpha5.ProvisionerInterface {
 	return &wrapKarpenterV1alpha5ProvisionerImpl{
 		dyn: w.dyn.Resource(schema.GroupVersionResource{
 			Group:    "karpenter.sh",
 			Version:  "v1alpha5",
 			Resource: "provisioners",
 		}),
-
-		namespace: namespace,
 	}
 }
 
 type wrapKarpenterV1alpha5ProvisionerImpl struct {
 	dyn dynamic.NamespaceableResourceInterface
-
-	namespace string
 }
 
 var _ typedkarpenterv1alpha5.ProvisionerInterface = (*wrapKarpenterV1alpha5ProvisionerImpl)(nil)
@@ -139,7 +135,7 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) Create(ctx context.Context, in *v
 	if err := convert(in, uo); err != nil {
 		return nil, err
 	}
-	uo, err := w.dyn.Namespace(w.namespace).Create(ctx, uo, opts)
+	uo, err := w.dyn.Create(ctx, uo, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -151,15 +147,15 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) Create(ctx context.Context, in *v
 }
 
 func (w *wrapKarpenterV1alpha5ProvisionerImpl) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
-	return w.dyn.Namespace(w.namespace).Delete(ctx, name, opts)
+	return w.dyn.Delete(ctx, name, opts)
 }
 
 func (w *wrapKarpenterV1alpha5ProvisionerImpl) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	return w.dyn.Namespace(w.namespace).DeleteCollection(ctx, opts, listOpts)
+	return w.dyn.DeleteCollection(ctx, opts, listOpts)
 }
 
 func (w *wrapKarpenterV1alpha5ProvisionerImpl) Get(ctx context.Context, name string, opts v1.GetOptions) (*v1alpha5.Provisioner, error) {
-	uo, err := w.dyn.Namespace(w.namespace).Get(ctx, name, opts)
+	uo, err := w.dyn.Get(ctx, name, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +167,7 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) Get(ctx context.Context, name str
 }
 
 func (w *wrapKarpenterV1alpha5ProvisionerImpl) List(ctx context.Context, opts v1.ListOptions) (*v1alpha5.ProvisionerList, error) {
-	uo, err := w.dyn.Namespace(w.namespace).List(ctx, opts)
+	uo, err := w.dyn.List(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +179,7 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) List(ctx context.Context, opts v1
 }
 
 func (w *wrapKarpenterV1alpha5ProvisionerImpl) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha5.Provisioner, err error) {
-	uo, err := w.dyn.Namespace(w.namespace).Patch(ctx, name, pt, data, opts)
+	uo, err := w.dyn.Patch(ctx, name, pt, data, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +200,7 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) Update(ctx context.Context, in *v
 	if err := convert(in, uo); err != nil {
 		return nil, err
 	}
-	uo, err := w.dyn.Namespace(w.namespace).Update(ctx, uo, opts)
+	uo, err := w.dyn.Update(ctx, uo, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +221,7 @@ func (w *wrapKarpenterV1alpha5ProvisionerImpl) UpdateStatus(ctx context.Context,
 	if err := convert(in, uo); err != nil {
 		return nil, err
 	}
-	uo, err := w.dyn.Namespace(w.namespace).UpdateStatus(ctx, uo, opts)
+	uo, err := w.dyn.UpdateStatus(ctx, uo, opts)
 	if err != nil {
 		return nil, err
 	}

@@ -17,12 +17,15 @@ package expectations
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
+	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/controllers/provisioning"
+	"github.com/aws/karpenter/pkg/controllers/selection"
 	//nolint:revive,stylecheck
 	. "github.com/onsi/gomega"
-
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/policy/v1beta1"
@@ -31,17 +34,18 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"knative.dev/pkg/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
-	"github.com/aws/karpenter/pkg/controllers/provisioning"
-	"github.com/aws/karpenter/pkg/controllers/selection"
 )
 
 const (
 	ReconcilerPropagationTime = 10 * time.Second
 	RequestInterval           = 1 * time.Second
 )
+
+func ExpectProvisionerExists(ctx context.Context, c client.Client, name string) *v1alpha5.Provisioner {
+	prov := &v1alpha5.Provisioner{}
+	Expect(c.Get(ctx, client.ObjectKey{Name: name}, prov)).To(Succeed())
+	return prov
+}
 
 func ExpectPodExists(ctx context.Context, c client.Client, name string, namespace string) *v1.Pod {
 	pod := &v1.Pod{}
@@ -134,6 +138,7 @@ func ExpectCleanedUp(ctx context.Context, c client.Client) {
 		nodes.Items[i].SetFinalizers([]string{})
 		Expect(c.Update(ctx, &nodes.Items[i])).To(Succeed())
 	}
+
 	for _, object := range []client.Object{
 		&v1.Pod{},
 		&v1.Node{},
@@ -156,16 +161,16 @@ func ExpectCleanedUp(ctx context.Context, c client.Client) {
 }
 
 // ExpectProvisioningCleanedUp includes additional cleanup logic for provisioning workflows
-func ExpectProvisioningCleanedUp(ctx context.Context, c client.Client, controller *provisioning.Controller) {
+func ExpectProvisioningCleanedUp(ctx context.Context, c client.Client, reconciler *provisioning.Reconciler) {
 	provisioners := v1alpha5.ProvisionerList{}
 	Expect(c.List(ctx, &provisioners)).To(Succeed())
 	ExpectCleanedUp(ctx, c)
 	for i := range provisioners.Items {
-		ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(&provisioners.Items[i]))
+		ExpectFinalizeSucceeded(ctx, reconciler, &provisioners.Items[i])
 	}
 }
 
-func ExpectProvisioned(ctx context.Context, c client.Client, selectionController *selection.Controller, provisioningController *provisioning.Controller, provisioner *v1alpha5.Provisioner, pods ...*v1.Pod) (result []*v1.Pod) {
+func ExpectProvisioned(ctx context.Context, c client.Client, selectionController *selection.Reconciler, provisioningController *provisioning.Reconciler, provisioner *v1alpha5.Provisioner, pods ...*v1.Pod) (result []*v1.Pod) {
 	provisioning.MaxItemsPerBatch = len(pods)
 	// Persist objects
 	ExpectApplied(ctx, c, provisioner)
@@ -173,13 +178,16 @@ func ExpectProvisioned(ctx context.Context, c client.Client, selectionController
 	for _, pod := range pods {
 		ExpectCreatedWithStatus(ctx, c, pod)
 	}
+
 	// Wait for reconcile
-	ExpectReconcileSucceeded(ctx, provisioningController, client.ObjectKeyFromObject(provisioner))
+	ExpectReconcileSucceeded(ctx, provisioningController, provisioner)
 	wg := sync.WaitGroup{}
 	for _, pod := range pods {
 		wg.Add(1)
 		go func(pod *v1.Pod) {
-			selectionController.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pod)})
+			// need to look the pod back up so the reconciler gets the latest version
+			pod = ExpectPodExists(ctx, c, pod.Name, pod.Namespace)
+			selectionController.ReconcileKind(ctx, pod)
 			wg.Done()
 		}(pod)
 	}
@@ -191,8 +199,47 @@ func ExpectProvisioned(ctx context.Context, c client.Client, selectionController
 	return result
 }
 
-func ExpectReconcileSucceeded(ctx context.Context, reconciler reconcile.Reconciler, key client.ObjectKey) reconcile.Result {
-	result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-	Expect(err).ToNot(HaveOccurred())
-	return result
+func ExpectReconcileSucceeded(ctx context.Context, reconciler interface{}, object interface{}) error {
+	if _, ok := object.(client.ObjectKey); ok {
+		Expect(ok).ShouldNot(BeTrue(), fmt.Sprintf("expected object to not be of type %T", object))
+	}
+
+	rv := reflect.ValueOf(reconciler)
+	rk := rv.MethodByName("ReconcileKind")
+	Expect(rk).ShouldNot(BeNil())
+	result := rk.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(object)})
+	Expect(len(result)).Should(BeNumerically("==", 1))
+	err := result[0].Interface()
+	if err == nil {
+		return nil
+	}
+	// (TODD) TODO: handle this
+	// Expect(controller.IsRequeueKey(err)).Should()
+	// result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+	// Expect(err).ToNot(HaveOccurred())
+	// return result
+	return err.(error)
+}
+
+func ExpectFinalizeSucceeded(ctx context.Context, reconciler interface{}, object interface{}) error {
+	if _, ok := object.(client.ObjectKey); ok {
+		Expect(ok).ShouldNot(BeTrue(), fmt.Sprintf("expected object to not be of type %T", object))
+	}
+
+	rv := reflect.ValueOf(reconciler)
+	rk := rv.MethodByName("FinalizeKind")
+	Expect(rk).ShouldNot(BeNil())
+	result := rk.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(object)})
+	Expect(len(result)).Should(BeNumerically("==", 1))
+
+	err := result[0].Interface()
+	if err == nil {
+		return nil
+	}
+	// (TODD) TODO: handle this
+	// Expect(controller.IsRequeueKey(err)).Should()
+	// result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+	// Expect(err).ToNot(HaveOccurred())
+	// return result
+	return err.(error)
 }

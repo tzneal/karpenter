@@ -42,9 +42,9 @@ func NewPreferences() *Preferences {
 	}
 }
 
-// Relax removes soft preferences from pod to enable scheduling if the cloud
+// Relax removes soft Preferences from pod to enable scheduling if the cloud
 // provider's capacity is constrained. For example, this can be leveraged to
-// prefer a specific zone, but relax the preferences if the pod cannot be
+// prefer a specific zone, but relax the Preferences if the pod cannot be
 // scheduled to that zone. Preferences are removed iteratively until only hard
 // constraints remain. Pods relaxation is reset (forgotten) after 5 minutes.
 func (p *Preferences) Relax(ctx context.Context, pod *v1.Pod) {
@@ -81,7 +81,7 @@ func (p *Preferences) removePreferredNodeAffinityTerm(pod *v1.Pod) *string {
 	terms := pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
 	// Remove the terms if there are any (terms are an OR semantic)
 	if len(terms) > 0 {
-		// Sort descending by weight to remove heaviest preferences to try lighter ones
+		// Sort descending by weight to remove heaviest Preferences to try lighter ones
 		sort.SliceStable(terms, func(i, j int) bool { return terms[i].Weight > terms[j].Weight })
 		pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = terms[1:]
 		return ptr.String(fmt.Sprintf("spec.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0]=%s", pretty.Concise(terms[0])))

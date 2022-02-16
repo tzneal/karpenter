@@ -38,6 +38,10 @@ type ProvisionerStatus struct {
 	Resources v1.ResourceList `json:"resources,omitempty"`
 }
 
+func (p *ProvisionerStatus) InitializeConditions() {
+	condSet.Manage(p).InitializeConditions()
+}
+
 func (p *Provisioner) StatusConditions() apis.ConditionManager {
 	return apis.NewLivingConditionSet(
 		Active,

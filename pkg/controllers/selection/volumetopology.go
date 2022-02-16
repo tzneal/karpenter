@@ -19,18 +19,17 @@ import (
 	"fmt"
 
 	v1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
-	"k8s.io/apimachinery/pkg/types"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func NewVolumeTopology(kubeClient client.Client) *VolumeTopology {
+func NewVolumeTopology(kubeClient kubernetes.Interface) *VolumeTopology {
 	return &VolumeTopology{kubeClient: kubeClient}
 }
 
 type VolumeTopology struct {
-	kubeClient client.Client
+	kubeClient kubernetes.Interface
 }
 
 func (v *VolumeTopology) Inject(ctx context.Context, pod *v1.Pod) error {
@@ -67,8 +66,8 @@ func (v *VolumeTopology) getRequirements(ctx context.Context, pod *v1.Pod, volum
 	if volume.PersistentVolumeClaim == nil {
 		return nil, nil
 	}
-	pvc := &v1.PersistentVolumeClaim{}
-	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: volume.PersistentVolumeClaim.ClaimName, Namespace: pod.Namespace}, pvc); err != nil {
+	pvc, err := v.kubeClient.CoreV1().PersistentVolumeClaims(pod.Namespace).Get(ctx, volume.PersistentVolumeClaim.ClaimName, metav1.GetOptions{})
+	if err != nil {
 		return nil, fmt.Errorf("getting persistent volume claim %s, %w", volume.PersistentVolumeClaim.ClaimName, err)
 	}
 	// Persistent Volume Requirements
@@ -91,8 +90,8 @@ func (v *VolumeTopology) getRequirements(ctx context.Context, pod *v1.Pod, volum
 }
 
 func (v *VolumeTopology) getStorageClassRequirements(ctx context.Context, pvc *v1.PersistentVolumeClaim) ([]v1.NodeSelectorRequirement, error) {
-	storageClass := &storagev1.StorageClass{}
-	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: ptr.StringValue(pvc.Spec.StorageClassName)}, storageClass); err != nil {
+	storageClass, err := v.kubeClient.StorageV1().StorageClasses().Get(ctx, ptr.StringValue(pvc.Spec.StorageClassName), metav1.GetOptions{})
+	if err != nil {
 		return nil, fmt.Errorf("getting storage class %q, %w", ptr.StringValue(pvc.Spec.StorageClassName), err)
 	}
 	var requirements []v1.NodeSelectorRequirement
@@ -106,8 +105,12 @@ func (v *VolumeTopology) getStorageClassRequirements(ctx context.Context, pvc *v
 }
 
 func (v *VolumeTopology) getPersistentVolumeRequirements(ctx context.Context, pod *v1.Pod, pvc *v1.PersistentVolumeClaim) ([]v1.NodeSelectorRequirement, error) {
-	pv := &v1.PersistentVolume{}
-	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName, Namespace: pod.Namespace}, pv); err != nil {
+	pv, err := v.kubeClient.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
+
+	// (todd) TODO: check on persistent volume, old code passed in a namespace?
+	/*pv := &v1.PersistentVolume{}
+	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName, Namespace: pod.Namespace}, pv); err != nil {*/
+	if err != nil {
 		return nil, fmt.Errorf("getting persistent volume %q, %w", pvc.Spec.VolumeName, err)
 	}
 	if pv.Spec.NodeAffinity == nil {

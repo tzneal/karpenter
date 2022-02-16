@@ -24,7 +24,7 @@ import (
 // Constraints are applied to all nodes created by the provisioner.
 type Constraints struct {
 	// Labels are layered with Requirements and applied to every node.
-	//+optional
+	// +optional
 	Labels map[string]string `json:"labels,omitempty"`
 	// Taints will be applied to every node launched by the Provisioner. If
 	// specified, the provisioner will not provision nodes for pods that do not
@@ -35,7 +35,7 @@ type Constraints struct {
 	// Requirements are layered with Labels and applied to every node.
 	Requirements Requirements `json:"requirements,inline,omitempty"`
 	// KubeletConfiguration are options passed to the kubelet when provisioning nodes
-	//+optional
+	// +optional
 	KubeletConfiguration KubeletConfiguration `json:"kubeletConfiguration,omitempty"`
 	// Provider contains fields specific to your cloudprovider.
 	// +kubebuilder:pruning:PreserveUnknownFields

@@ -29,8 +29,9 @@ type ProvisionerLister interface {
 	// List lists all Provisioners in the indexer.
 	// Objects returned here must be treated as read-only.
 	List(selector labels.Selector) (ret []*v1alpha5.Provisioner, err error)
-	// Provisioners returns an object that can list and get Provisioners.
-	Provisioners(namespace string) ProvisionerNamespaceLister
+	// Get retrieves the Provisioner from the index for a given name.
+	// Objects returned here must be treated as read-only.
+	Get(name string) (*v1alpha5.Provisioner, error)
 	ProvisionerListerExpansion
 }
 
@@ -52,41 +53,9 @@ func (s *provisionerLister) List(selector labels.Selector) (ret []*v1alpha5.Prov
 	return ret, err
 }
 
-// Provisioners returns an object that can list and get Provisioners.
-func (s *provisionerLister) Provisioners(namespace string) ProvisionerNamespaceLister {
-	return provisionerNamespaceLister{indexer: s.indexer, namespace: namespace}
-}
-
-// ProvisionerNamespaceLister helps list and get Provisioners.
-// All objects returned here must be treated as read-only.
-type ProvisionerNamespaceLister interface {
-	// List lists all Provisioners in the indexer for a given namespace.
-	// Objects returned here must be treated as read-only.
-	List(selector labels.Selector) (ret []*v1alpha5.Provisioner, err error)
-	// Get retrieves the Provisioner from the indexer for a given namespace and name.
-	// Objects returned here must be treated as read-only.
-	Get(name string) (*v1alpha5.Provisioner, error)
-	ProvisionerNamespaceListerExpansion
-}
-
-// provisionerNamespaceLister implements the ProvisionerNamespaceLister
-// interface.
-type provisionerNamespaceLister struct {
-	indexer   cache.Indexer
-	namespace string
-}
-
-// List lists all Provisioners in the indexer for a given namespace.
-func (s provisionerNamespaceLister) List(selector labels.Selector) (ret []*v1alpha5.Provisioner, err error) {
-	err = cache.ListAllByNamespace(s.indexer, s.namespace, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1alpha5.Provisioner))
-	})
-	return ret, err
-}
-
-// Get retrieves the Provisioner from the indexer for a given namespace and name.
-func (s provisionerNamespaceLister) Get(name string) (*v1alpha5.Provisioner, error) {
-	obj, exists, err := s.indexer.GetByKey(s.namespace + "/" + name)
+// Get retrieves the Provisioner from the index for a given name.
+func (s *provisionerLister) Get(name string) (*v1alpha5.Provisioner, error) {
+	obj, exists, err := s.indexer.GetByKey(name)
 	if err != nil {
 		return nil, err
 	}

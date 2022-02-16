@@ -32,8 +32,8 @@ type KarpenterV1alpha5Client struct {
 	restClient rest.Interface
 }
 
-func (c *KarpenterV1alpha5Client) Provisioners(namespace string) ProvisionerInterface {
-	return newProvisioners(c, namespace)
+func (c *KarpenterV1alpha5Client) Provisioners() ProvisionerInterface {
+	return newProvisioners(c)
 }
 
 // NewForConfig creates a new KarpenterV1alpha5Client for the given config.

@@ -65,8 +65,6 @@ func Get(ctx context.Context) v1alpha5.ProvisionerInformer {
 type wrapper struct {
 	client versioned.Interface
 
-	namespace string
-
 	resourceVersion string
 }
 
@@ -81,10 +79,6 @@ func (w *wrapper) Lister() provisioningv1alpha5.ProvisionerLister {
 	return w
 }
 
-func (w *wrapper) Provisioners(namespace string) provisioningv1alpha5.ProvisionerNamespaceLister {
-	return &wrapper{client: w.client, namespace: namespace, resourceVersion: w.resourceVersion}
-}
-
 // SetResourceVersion allows consumers to adjust the minimum resourceVersion
 // used by the underlying client.  It is not accessible via the standard
 // lister interface, but can be accessed through a user-defined interface and
@@ -94,7 +88,7 @@ func (w *wrapper) SetResourceVersion(resourceVersion string) {
 }
 
 func (w *wrapper) List(selector labels.Selector) (ret []*apisprovisioningv1alpha5.Provisioner, err error) {
-	lo, err := w.client.KarpenterV1alpha5().Provisioners(w.namespace).List(context.TODO(), v1.ListOptions{
+	lo, err := w.client.KarpenterV1alpha5().Provisioners().List(context.TODO(), v1.ListOptions{
 		LabelSelector:   selector.String(),
 		ResourceVersion: w.resourceVersion,
 	})
@@ -108,7 +102,7 @@ func (w *wrapper) List(selector labels.Selector) (ret []*apisprovisioningv1alpha
 }
 
 func (w *wrapper) Get(name string) (*apisprovisioningv1alpha5.Provisioner, error) {
-	return w.client.KarpenterV1alpha5().Provisioners(w.namespace).Get(context.TODO(), name, v1.GetOptions{
+	return w.client.KarpenterV1alpha5().Provisioners().Get(context.TODO(), name, v1.GetOptions{
 		ResourceVersion: w.resourceVersion,
 	})
 }

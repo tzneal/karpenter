@@ -39,5 +39,5 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 
 // Provisioners returns a ProvisionerInformer.
 func (v *version) Provisioners() ProvisionerInformer {
-	return &provisionerInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+	return &provisionerInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }

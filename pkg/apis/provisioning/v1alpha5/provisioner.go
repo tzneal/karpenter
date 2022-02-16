@@ -58,6 +58,7 @@ type ProvisionerSpec struct {
 // Provisioner is the Schema for the Provisioners API
 //
 // +genclient
+// +genclient:nonNamespaced
 // +genreconciler
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type Provisioner struct {

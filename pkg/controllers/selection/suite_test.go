@@ -21,27 +21,27 @@ import (
 
 	"github.com/Pallinder/go-randomdata"
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	"github.com/aws/karpenter/pkg/cloudprovider/fake"
 	"github.com/aws/karpenter/pkg/cloudprovider/registry"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/selection"
 	"github.com/aws/karpenter/pkg/test"
-
-	v1 "k8s.io/api/core/v1"
-	storagev1 "k8s.io/api/storage/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/kubernetes"
 
 	. "github.com/aws/karpenter/pkg/test/expectations"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	. "knative.dev/pkg/logging/testing"
 )
 
 var ctx context.Context
 var provisioner *v1alpha5.Provisioner
-var provisioners *provisioning.Controller
-var selectionController *selection.Controller
+var provisioningController *provisioning.Reconciler
+var selectionController *selection.Reconciler
 var env *test.Environment
 
 func TestAPIs(t *testing.T) {
@@ -54,8 +54,22 @@ var _ = BeforeSuite(func() {
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
 		cloudProvider := &fake.CloudProvider{}
 		registry.RegisterOrDie(ctx, cloudProvider)
-		provisioners = provisioning.NewController(ctx, e.Client, corev1.NewForConfigOrDie(e.Config), cloudProvider)
-		selectionController = selection.NewController(e.Client, provisioners)
+
+		prov := provisioning.NewProvisioners()
+		kc := kubernetes.NewForConfigOrDie(e.Config)
+		provisioningController = &provisioning.Reconciler{
+			KubeClient:    kc,
+			CloudProvider: cloudProvider,
+			KarpClient:    versioned.NewForConfigOrDie(e.Config),
+			Provisioners:  prov,
+		}
+
+		selectionController = &selection.Reconciler{
+			KubeClient:     kc,
+			Provisioners:   prov,
+			Preferences:    selection.NewPreferences(),
+			VolumeTopology: selection.NewVolumeTopology(kc),
+		}
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -73,7 +87,7 @@ var _ = BeforeEach(func() {
 })
 
 var _ = AfterEach(func() {
-	ExpectProvisioningCleanedUp(ctx, env.Client, provisioners)
+	ExpectProvisioningCleanedUp(ctx, env.Client, provisioningController)
 })
 
 var _ = Describe("Volume Topology Requirements", func() {
@@ -83,7 +97,7 @@ var _ = Describe("Volume Topology Requirements", func() {
 	})
 	It("should not schedule if invalid pvc", func() {
 		ExpectCreated(ctx, env.Client)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod(test.PodOptions{
 			PersistentVolumeClaims: []string{"invalid"},
 		}))[0]
 		ExpectNotScheduled(ctx, env.Client, pod)
@@ -91,7 +105,7 @@ var _ = Describe("Volume Topology Requirements", func() {
 	It("should schedule to storage class zones if volume does not exist", func() {
 		persistentVolumeClaim := test.PersistentVolumeClaim(test.PersistentVolumeClaimOptions{StorageClassName: &storageClass.Name})
 		ExpectCreated(ctx, env.Client, storageClass, persistentVolumeClaim)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod(test.PodOptions{
 			PersistentVolumeClaims: []string{persistentVolumeClaim.Name},
 			NodeRequirements: []v1.NodeSelectorRequirement{{
 				Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1", "test-zone-3"},
@@ -103,7 +117,7 @@ var _ = Describe("Volume Topology Requirements", func() {
 	It("should not schedule if storage class zones are incompatible", func() {
 		persistentVolumeClaim := test.PersistentVolumeClaim(test.PersistentVolumeClaimOptions{StorageClassName: &storageClass.Name})
 		ExpectCreated(ctx, env.Client, storageClass, persistentVolumeClaim)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod(test.PodOptions{
 			PersistentVolumeClaims: []string{persistentVolumeClaim.Name},
 			NodeRequirements: []v1.NodeSelectorRequirement{{
 				Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1"},
@@ -115,7 +129,7 @@ var _ = Describe("Volume Topology Requirements", func() {
 		persistentVolume := test.PersistentVolume(test.PersistentVolumeOptions{Zones: []string{"test-zone-3"}})
 		persistentVolumeClaim := test.PersistentVolumeClaim(test.PersistentVolumeClaimOptions{VolumeName: persistentVolume.Name, StorageClassName: &storageClass.Name})
 		ExpectCreated(ctx, env.Client, storageClass, persistentVolumeClaim, persistentVolume)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod(test.PodOptions{
 			PersistentVolumeClaims: []string{persistentVolumeClaim.Name},
 		}))[0]
 		node := ExpectScheduled(ctx, env.Client, pod)
@@ -125,7 +139,7 @@ var _ = Describe("Volume Topology Requirements", func() {
 		persistentVolume := test.PersistentVolume(test.PersistentVolumeOptions{Zones: []string{"test-zone-3"}})
 		persistentVolumeClaim := test.PersistentVolumeClaim(test.PersistentVolumeClaimOptions{VolumeName: persistentVolume.Name, StorageClassName: &storageClass.Name})
 		ExpectCreated(ctx, env.Client, storageClass, persistentVolumeClaim, persistentVolume)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod(test.PodOptions{
 			PersistentVolumeClaims: []string{persistentVolumeClaim.Name},
 			NodeRequirements: []v1.NodeSelectorRequirement{{
 				Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1"},
@@ -148,7 +162,7 @@ var _ = Describe("Preferential Fallback", func() {
 				}},
 			}}}}
 			// Don't relax
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 		})
 		It("should relax multiple terms", func() {
@@ -168,13 +182,13 @@ var _ = Describe("Preferential Fallback", func() {
 				}},
 			}}}}
 			// Remove first term
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 			// Remove second term
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 			// Success
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			node := ExpectScheduled(ctx, env.Client, pod)
 			Expect(node.Labels).To(HaveKeyWithValue(v1.LabelTopologyZone, "test-zone-1"))
 		})
@@ -195,13 +209,13 @@ var _ = Describe("Preferential Fallback", func() {
 				},
 			}}}
 			// Remove first term
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 			// Remove second term
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 			// Success
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectScheduled(ctx, env.Client, pod)
 		})
 		It("should relax to use lighter weights", func() {
@@ -226,10 +240,10 @@ var _ = Describe("Preferential Fallback", func() {
 				},
 			}}}
 			// Remove heaviest term
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 			// Success
-			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod)[0]
+			pod = ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, pod)[0]
 			node := ExpectScheduled(ctx, env.Client, pod)
 			Expect(node.Labels).To(HaveKeyWithValue(v1.LabelTopologyZone, "test-zone-2"))
 		})
@@ -240,8 +254,8 @@ var _ = Describe("Multiple Provisioners", func() {
 	It("should schedule to an explicitly selected provisioner", func() {
 		provisioner2 := provisioner.DeepCopy()
 		provisioner2.Name = "provisioner2"
-		ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner2)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
+		ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner2)
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner,
 			test.UnschedulablePod(test.PodOptions{NodeSelector: map[string]string{v1alpha5.ProvisionerNameLabelKey: provisioner2.Name}}),
 		)[0]
 		node := ExpectScheduled(ctx, env.Client, pod)
@@ -252,18 +266,18 @@ var _ = Describe("Multiple Provisioners", func() {
 		provisioner2.Name = "provisioner2"
 		provisioner2.Spec.Labels = map[string]string{"foo": "bar"}
 		provisioner.Spec.Labels = map[string]string{"foo": "baz"}
-		ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner2)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
+		ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner2)
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner,
 			test.UnschedulablePod(test.PodOptions{NodeSelector: map[string]string{"foo": "bar"}}),
 		)[0]
 		node := ExpectScheduled(ctx, env.Client, pod)
 		Expect(node.Labels[v1alpha5.ProvisionerNameLabelKey]).To(Equal(provisioner2.Name))
 	})
-	It("should prioritize provisioners alphabetically if multiple match", func() {
+	It("should prioritize Provisioners alphabetically if multiple match", func() {
 		provisioner2 := provisioner.DeepCopy()
 		provisioner2.Name = "aaaaaaaaa"
-		ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner2)
-		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod())[0]
+		ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner2)
+		pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioningController, provisioner, test.UnschedulablePod())[0]
 		node := ExpectScheduled(ctx, env.Client, pod)
 		Expect(node.Labels[v1alpha5.ProvisionerNameLabelKey]).To(Equal(provisioner2.Name))
 	})

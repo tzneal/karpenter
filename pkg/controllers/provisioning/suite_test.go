@@ -16,32 +16,29 @@ package provisioning_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
-	"github.com/Pallinder/go-randomdata"
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	"github.com/aws/karpenter/pkg/cloudprovider/fake"
 	"github.com/aws/karpenter/pkg/cloudprovider/registry"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/selection"
 	"github.com/aws/karpenter/pkg/test"
+	. "github.com/aws/karpenter/pkg/test/expectations"
 	"github.com/aws/karpenter/pkg/utils/resources"
-
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-
-	. "github.com/aws/karpenter/pkg/test/expectations"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"k8s.io/client-go/kubernetes"
 	. "knative.dev/pkg/logging/testing"
 )
 
 var ctx context.Context
-var provisioningController *provisioning.Controller
-var selectionController *selection.Controller
+var provisioningController *provisioning.Reconciler
+var selectionController *selection.Reconciler
 var env *test.Environment
 
 func TestAPIs(t *testing.T) {
@@ -54,8 +51,23 @@ var _ = BeforeSuite(func() {
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
 		cloudProvider := &fake.CloudProvider{}
 		registry.RegisterOrDie(ctx, cloudProvider)
-		provisioningController = provisioning.NewController(ctx, e.Client, corev1.NewForConfigOrDie(e.Config), cloudProvider)
-		selectionController = selection.NewController(e.Client, provisioningController)
+
+		provisioners := provisioning.NewProvisioners()
+
+		kc := kubernetes.NewForConfigOrDie(e.Config)
+		provisioningController = &provisioning.Reconciler{
+			KubeClient:    kc,
+			CloudProvider: cloudProvider,
+			KarpClient:    versioned.NewForConfigOrDie(e.Config),
+			Provisioners:  provisioners,
+		}
+
+		selectionController = &selection.Reconciler{
+			KubeClient:     kc,
+			Provisioners:   provisioners,
+			Preferences:    selection.NewPreferences(),
+			VolumeTopology: selection.NewVolumeTopology(kc),
+		}
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -67,21 +79,37 @@ var _ = AfterSuite(func() {
 var _ = Describe("Provisioning", func() {
 	var provisioner *v1alpha5.Provisioner
 	BeforeEach(func() {
-		provisioner = &v1alpha5.Provisioner{
-			ObjectMeta: metav1.ObjectMeta{Name: strings.ToLower(randomdata.SillyName())},
-			Spec: v1alpha5.ProvisionerSpec{
-				Limits: v1alpha5.Limits{
-					Resources: v1.ResourceList{
-						v1.ResourceCPU: *resource.NewScaledQuantity(10, 0),
-					},
-				},
-			},
-		}
+		provisioner = test.Provisioner()
 		provisioner.SetDefaults(ctx)
 	})
 
 	AfterEach(func() {
 		ExpectProvisioningCleanedUp(ctx, env.Client, provisioningController)
+	})
+	Context("Creation", func() {
+		It("should create multiple provisioners", func() {
+			p1 := test.Provisioner()
+			p1.SetDefaults(ctx)
+			p2 := test.Provisioner()
+			p2.SetDefaults(ctx)
+
+			ExpectCreated(ctx, env.Client, p1, p2)
+			ExpectProvisionerExists(ctx, env.Client, p1.Name)
+			ExpectProvisionerExists(ctx, env.Client, p2.Name)
+
+			// test our client
+			kc := versioned.NewForConfigOrDie(env.Config)
+			all, err := kc.KarpenterV1alpha5().Provisioners().List(ctx, metav1.ListOptions{})
+			Expect(err).To(BeNil())
+			Expect(len(all.Items)).To(BeNumerically("==", 2))
+
+			// delete with both clients
+			env.Client.Delete(ctx, p1)
+			kc.KarpenterV1alpha5().Provisioners().Delete(ctx, p2.Name, metav1.DeleteOptions{})
+
+			ExpectNotFound(ctx, env.Client, p1)
+			ExpectNotFound(ctx, env.Client, p2)
+		})
 	})
 
 	Context("Reconciliation", func() {

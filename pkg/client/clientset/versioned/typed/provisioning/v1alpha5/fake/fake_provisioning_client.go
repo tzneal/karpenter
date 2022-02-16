@@ -26,8 +26,8 @@ type FakeKarpenterV1alpha5 struct {
 	*testing.Fake
 }
 
-func (c *FakeKarpenterV1alpha5) Provisioners(namespace string) v1alpha5.ProvisionerInterface {
-	return &FakeProvisioners{c, namespace}
+func (c *FakeKarpenterV1alpha5) Provisioners() v1alpha5.ProvisionerInterface {
+	return &FakeProvisioners{c}
 }
 
 // RESTClient returns a RESTClient that is used to communicate

@@ -31,7 +31,7 @@ import (
 // ProvisionersGetter has a method to return a ProvisionerInterface.
 // A group's client should implement this interface.
 type ProvisionersGetter interface {
-	Provisioners(namespace string) ProvisionerInterface
+	Provisioners() ProvisionerInterface
 }
 
 // ProvisionerInterface has methods to work with Provisioner resources.
@@ -51,14 +51,12 @@ type ProvisionerInterface interface {
 // provisioners implements ProvisionerInterface
 type provisioners struct {
 	client rest.Interface
-	ns     string
 }
 
 // newProvisioners returns a Provisioners
-func newProvisioners(c *KarpenterV1alpha5Client, namespace string) *provisioners {
+func newProvisioners(c *KarpenterV1alpha5Client) *provisioners {
 	return &provisioners{
 		client: c.RESTClient(),
-		ns:     namespace,
 	}
 }
 
@@ -66,7 +64,6 @@ func newProvisioners(c *KarpenterV1alpha5Client, namespace string) *provisioners
 func (c *provisioners) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha5.Provisioner, err error) {
 	result = &v1alpha5.Provisioner{}
 	err = c.client.Get().
-		Namespace(c.ns).
 		Resource("provisioners").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -83,7 +80,6 @@ func (c *provisioners) List(ctx context.Context, opts v1.ListOptions) (result *v
 	}
 	result = &v1alpha5.ProvisionerList{}
 	err = c.client.Get().
-		Namespace(c.ns).
 		Resource("provisioners").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -100,7 +96,6 @@ func (c *provisioners) Watch(ctx context.Context, opts v1.ListOptions) (watch.In
 	}
 	opts.Watch = true
 	return c.client.Get().
-		Namespace(c.ns).
 		Resource("provisioners").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,7 +106,6 @@ func (c *provisioners) Watch(ctx context.Context, opts v1.ListOptions) (watch.In
 func (c *provisioners) Create(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.CreateOptions) (result *v1alpha5.Provisioner, err error) {
 	result = &v1alpha5.Provisioner{}
 	err = c.client.Post().
-		Namespace(c.ns).
 		Resource("provisioners").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(provisioner).
@@ -124,7 +118,6 @@ func (c *provisioners) Create(ctx context.Context, provisioner *v1alpha5.Provisi
 func (c *provisioners) Update(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.UpdateOptions) (result *v1alpha5.Provisioner, err error) {
 	result = &v1alpha5.Provisioner{}
 	err = c.client.Put().
-		Namespace(c.ns).
 		Resource("provisioners").
 		Name(provisioner.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -139,7 +132,6 @@ func (c *provisioners) Update(ctx context.Context, provisioner *v1alpha5.Provisi
 func (c *provisioners) UpdateStatus(ctx context.Context, provisioner *v1alpha5.Provisioner, opts v1.UpdateOptions) (result *v1alpha5.Provisioner, err error) {
 	result = &v1alpha5.Provisioner{}
 	err = c.client.Put().
-		Namespace(c.ns).
 		Resource("provisioners").
 		Name(provisioner.Name).
 		SubResource("status").
@@ -153,7 +145,6 @@ func (c *provisioners) UpdateStatus(ctx context.Context, provisioner *v1alpha5.P
 // Delete takes name of the provisioner and deletes it. Returns an error if one occurs.
 func (c *provisioners) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
-		Namespace(c.ns).
 		Resource("provisioners").
 		Name(name).
 		Body(&opts).
@@ -168,7 +159,6 @@ func (c *provisioners) DeleteCollection(ctx context.Context, opts v1.DeleteOptio
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
-		Namespace(c.ns).
 		Resource("provisioners").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -181,7 +171,6 @@ func (c *provisioners) DeleteCollection(ctx context.Context, opts v1.DeleteOptio
 func (c *provisioners) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha5.Provisioner, err error) {
 	result = &v1alpha5.Provisioner{}
 	err = c.client.Patch(pt).
-		Namespace(c.ns).
 		Resource("provisioners").
 		Name(name).
 		SubResource(subresources...).

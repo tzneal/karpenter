@@ -17,6 +17,8 @@ package provisioning
 import (
 	"context"
 	"fmt"
+	"sort"
+	"sync"
 	"sync/atomic"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
@@ -37,6 +39,54 @@ import (
 	"knative.dev/pkg/logging"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
+
+type Provisioners struct {
+	provisioners *sync.Map
+}
+
+func (p *Provisioners) Store(name string, provisioner *Provisioner) {
+	p.provisioners.Store(name, provisioner)
+}
+
+func (p *Provisioners) LoadAndDelete(name string) (provisioner *Provisioner, loaded bool) {
+	prov, loaded := p.provisioners.LoadAndDelete(name)
+	if !loaded {
+		return nil, false
+	}
+	return prov.(*Provisioner), loaded
+}
+
+func (p *Provisioners) Range(f func(key string, value *Provisioner) bool) {
+	p.provisioners.Range(func(k, v interface{}) bool {
+		ks := k.(string)
+		vp := v.(*Provisioner)
+		return f(ks, vp)
+	})
+}
+
+func (p *Provisioners) Load(key string) (prov *Provisioner, ok bool) {
+	if v, ok := p.provisioners.Load(key); ok && v != nil {
+		return v.(*Provisioner), ok
+	}
+	return nil, false
+}
+
+// List active Provisioners in order of priority
+func (p *Provisioners) List(ctx context.Context) []*Provisioner {
+	var provisioners []*Provisioner
+	p.provisioners.Range(func(key, value interface{}) bool {
+		provisioners = append(provisioners, value.(*Provisioner))
+		return true
+	})
+	sort.Slice(provisioners, func(i, j int) bool { return provisioners[i].Name < provisioners[j].Name })
+	return provisioners
+}
+
+func NewProvisioners() *Provisioners {
+	return &Provisioners{
+		provisioners: &sync.Map{},
+	}
+}
 
 func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kubeClient kubernetes.Interface, coreV1Client *versioned.Clientset, cloudProvider cloudprovider.CloudProvider) *Provisioner {
 	running, stop := context.WithCancel(ctx)
@@ -83,7 +133,7 @@ func (p *Provisioner) Add(pod *v1.Pod) <-chan struct{} {
 
 func (p *Provisioner) provision(ctx context.Context) (err error) {
 	// Batch pods
-	logging.FromContext(ctx).Infof("Waiting for unschedulable pods")
+	logging.FromContext(ctx).Infof("%s waiting for unschedulable pods", p.Name)
 	items, window := p.batcher.Wait()
 	defer p.batcher.Flush()
 	logging.FromContext(ctx).Infof("Batched %d pods in %s", len(items), window)
@@ -142,7 +192,7 @@ func (p *Provisioner) isProvisionable(ctx context.Context, candidate *v1.Pod) (b
 
 func (p *Provisioner) launch(ctx context.Context, constraints *v1alpha5.Constraints, packing *binpacking.Packing) error {
 	// Check limits
-	latest, err := p.karpClient.KarpenterV1alpha5().Provisioners(p.Provisioner.Namespace).Get(ctx, p.Provisioner.Name, metav1.GetOptions{})
+	latest, err := p.karpClient.KarpenterV1alpha5().Provisioners().Get(ctx, p.Provisioner.Name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("getting current resource usage, %w", err)
 	}

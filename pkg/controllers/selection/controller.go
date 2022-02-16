@@ -22,80 +22,77 @@ import (
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/utils/pod"
-	"github.com/go-logr/zapr"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/client-go/kubernetes"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	podreconciler "knative.dev/pkg/client/injection/kube/reconciler/core/v1/pod"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
-	controllerruntime "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"knative.dev/pkg/reconciler"
 )
 
-const controllerName = "selection"
-
-// Controller for the resource
-type Controller struct {
-	kubeClient     client.Client
-	provisioners   *provisioning.Controller
-	preferences    *Preferences
-	volumeTopology *VolumeTopology
+// Reconciler for the resource
+type Reconciler struct {
+	KubeClient     kubernetes.Interface
+	Provisioners   *provisioning.Provisioners
+	Preferences    *Preferences
+	VolumeTopology *VolumeTopology
 }
 
-// NewController constructs a controller instance
-func NewController(kubeClient client.Client, provisioners *provisioning.Controller) *Controller {
-	return &Controller{
-		kubeClient:     kubeClient,
-		provisioners:   provisioners,
-		preferences:    NewPreferences(),
-		volumeTopology: NewVolumeTopology(kubeClient),
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+	kubeClient := kubeclient.Get(ctx)
+
+	r := &Reconciler{
+		KubeClient:     kubeClient,
+		Provisioners:   provisioning.GetProvisioners(ctx),
+		Preferences:    NewPreferences(),
+		VolumeTopology: NewVolumeTopology(kubeClient),
 	}
+
+	impl := podreconciler.NewImpl(ctx, r)
+	impl.Name = "selection"
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	return impl
 }
 
-// Reconcile the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("pod", req.String()))
-	pod := &v1.Pod{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, pod); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
+func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
+	// (todd) TODO: does knative already add to the logger?
+	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("pod", req.String()))
+
 	// Ensure the pod can be provisioned
 	if !isProvisionable(pod) {
-		return reconcile.Result{}, nil
+		return nil
 	}
 	if err := validate(pod); err != nil {
 		logging.FromContext(ctx).Debugf("Ignoring pod, %s", err)
-		return reconcile.Result{}, nil
+		return nil
 	}
 	// Select a provisioner, wait for it to bind the pod, and verify scheduling succeeded in the next loop
 	if err := c.selectProvisioner(ctx, pod); err != nil {
 		logging.FromContext(ctx).Debugf("Could not schedule pod, %s", err)
-		return reconcile.Result{}, err
+		return err
 	}
-	return reconcile.Result{RequeueAfter: time.Second * 5}, nil
+	return controller.NewRequeueAfter(time.Second * 5)
 }
 
-func (c *Controller) selectProvisioner(ctx context.Context, pod *v1.Pod) (errs error) {
-	// Relax preferences if pod has previously failed to schedule.
-	c.preferences.Relax(ctx, pod)
+func (c *Reconciler) selectProvisioner(ctx context.Context, pod *v1.Pod) (errs error) {
+	// Relax Preferences if pod has previously failed to schedule.
+	c.Preferences.Relax(ctx, pod)
 	// Inject volume topological requirements
-	if err := c.volumeTopology.Inject(ctx, pod); err != nil {
+	if err := c.VolumeTopology.Inject(ctx, pod); err != nil {
 		return fmt.Errorf("getting volume topology requirements, %w", err)
 	}
 	// Pick provisioner
 	var provisioner *provisioning.Provisioner
-	provisioners := c.provisioners.List(ctx)
+	provisioners := c.Provisioners.List(ctx)
 	if len(provisioners) == 0 {
 		return nil
 	}
-	for _, candidate := range c.provisioners.List(ctx) {
+	for _, candidate := range c.Provisioners.List(ctx) {
 		if err := candidate.Spec.DeepCopy().ValidatePod(pod); err != nil {
 			errs = multierr.Append(errs, fmt.Errorf("tried provisioner/%s: %w", candidate.Name, err))
 		} else {
@@ -104,7 +101,7 @@ func (c *Controller) selectProvisioner(ctx context.Context, pod *v1.Pod) (errs e
 		}
 	}
 	if provisioner == nil {
-		return fmt.Errorf("matched 0/%d provisioners, %w", len(multierr.Errors(errs)), errs)
+		return fmt.Errorf("matched 0/%d Provisioners, %w", len(multierr.Errors(errs)), errs)
 	}
 	select {
 	case <-provisioner.Add(pod):
@@ -172,14 +169,4 @@ func validateNodeSelectorTerm(term v1.NodeSelectorTerm) (errs error) {
 		}
 	}
 	return errs
-}
-
-func (c *Controller) Register(_ context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named(controllerName).
-		For(&v1.Pod{}).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 10_000}).
-		WithLogger(zapr.NewLogger(zap.NewNop())).
-		Complete(c)
 }

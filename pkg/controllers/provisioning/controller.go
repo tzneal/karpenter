@@ -16,7 +16,6 @@ package provisioning
 
 import (
 	"context"
-	"sync"
 
 	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	provisioninginformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
@@ -27,16 +26,21 @@ import (
 	"knative.dev/pkg/controller"
 )
 
+var _ provisioningreconciler.Interface = (*Reconciler)(nil)
+var _ provisioningreconciler.Finalizer = (*Reconciler)(nil)
+
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	kubeClient := kubeclient.Get(ctx)
+
 	r := &Reconciler{
-		karpClient:    versioned.New(kubeClient.CoreV1().RESTClient()),
-		kubeClient:    kubeClient,
-		provisioners:  &sync.Map{},
-		cloudProvider: cloudprovider.GetCloudProvider(ctx),
+		KarpClient:    versioned.New(kubeClient.CoreV1().RESTClient()),
+		KubeClient:    kubeClient,
+		Provisioners:  GetProvisioners(ctx),
+		CloudProvider: cloudprovider.GetCloudProvider(ctx),
 	}
 
 	impl := provisioningreconciler.NewImpl(ctx, r)
+	impl.Name = "provisioning"
 
 	provisioninginformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 	return impl

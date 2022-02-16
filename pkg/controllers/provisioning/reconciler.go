@@ -17,8 +17,6 @@ package provisioning
 import (
 	"context"
 	"fmt"
-	"sort"
-	"sync"
 	"time"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
@@ -35,23 +33,31 @@ import (
 )
 
 type Reconciler struct {
-	provisioners  *sync.Map
-	kubeClient    kubernetes.Interface
-	cloudProvider cloudprovider.CloudProvider
-	karpClient    *versioned.Clientset
+	KubeClient    kubernetes.Interface
+	CloudProvider cloudprovider.CloudProvider
+	KarpClient    *versioned.Clientset
+	Provisioners  *Provisioners
 }
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, provisioner *v1alpha5.Provisioner) reconciler.Event {
 	if err := r.Apply(ctx, provisioner); err != nil {
 		return err
 	}
+	// (todd): TODO: what about this?
+	// provisioner.Status.InitializeConditions()
+	// provisioner.Status.ObservedGeneration = provisioner.Generation
+
 	// Requeue in order to discover any changes from GetInstanceTypes.
 	return controller.NewRequeueAfter(5 * time.Minute)
 }
 
+func (r *Reconciler) FinalizeKind(ctx context.Context, provisioner *v1alpha5.Provisioner) reconciler.Event {
+	r.Delete(provisioner.Name)
+	return nil
+}
 func (r *Reconciler) Apply(ctx context.Context, provisioner *v1alpha5.Provisioner) error {
 	// Refresh global requirements using instance type availability
-	instanceTypes, err := r.cloudProvider.GetInstanceTypes(ctx, provisioner.Spec.Provider)
+	instanceTypes, err := r.CloudProvider.GetInstanceTypes(ctx, provisioner.Spec.Provider)
 	if err != nil {
 		return err
 	}
@@ -65,25 +71,25 @@ func (r *Reconciler) Apply(ctx context.Context, provisioner *v1alpha5.Provisione
 	// Update the provisioner if anything has changed
 	if r.hasChanged(ctx, provisioner) {
 		r.Delete(provisioner.Name)
-		r.provisioners.Store(provisioner.Name, NewProvisioner(ctx, provisioner, r.kubeClient, r.karpClient, r.cloudProvider))
+		r.Provisioners.Store(provisioner.Name, NewProvisioner(ctx, provisioner, r.KubeClient, r.KarpClient, r.CloudProvider))
 	}
 	return nil
 }
 
 // Delete stops and removes a provisioner. Enqueued pods will be provisioned.
 func (r *Reconciler) Delete(name string) {
-	if p, ok := r.provisioners.LoadAndDelete(name); ok {
-		p.(*Provisioner).Stop()
+	if p, ok := r.Provisioners.LoadAndDelete(name); ok {
+		p.Stop()
 	}
 }
 
 // Returns true if the new candidate provisioner is different than the provisioner in memory.
-func (c *Reconciler) hasChanged(ctx context.Context, provisionerNew *v1alpha5.Provisioner) bool {
-	oldProvisioner, ok := c.provisioners.Load(provisionerNew.Name)
+func (r *Reconciler) hasChanged(ctx context.Context, provisionerNew *v1alpha5.Provisioner) bool {
+	oldProvisioner, ok := r.Provisioners.Load(provisionerNew.Name)
 	if !ok {
 		return true
 	}
-	hashKeyOld, err := hashstructure.Hash(oldProvisioner.(*Provisioner).Spec, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
+	hashKeyOld, err := hashstructure.Hash(oldProvisioner.Spec, hashstructure.FormatV2, &hashstructure.HashOptions{SlicesAsSets: true})
 	if err != nil {
 		logging.FromContext(ctx).Fatalf("Unable to hash old provisioner spec: %s", err)
 	}
@@ -92,17 +98,6 @@ func (c *Reconciler) hasChanged(ctx context.Context, provisionerNew *v1alpha5.Pr
 		logging.FromContext(ctx).Fatalf("Unable to hash new provisioner spec: %s", err)
 	}
 	return hashKeyOld != hashKeyNew
-}
-
-// List active provisioners in order of priority
-func (c *Reconciler) List(ctx context.Context) []*Provisioner {
-	provisioners := []*Provisioner{}
-	c.provisioners.Range(func(key, value interface{}) bool {
-		provisioners = append(provisioners, value.(*Provisioner))
-		return true
-	})
-	sort.Slice(provisioners, func(i, j int) bool { return provisioners[i].Name < provisioners[j].Name })
-	return provisioners
 }
 
 func requirements(instanceTypes []cloudprovider.InstanceType) []v1.NodeSelectorRequirement {

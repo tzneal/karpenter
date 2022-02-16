@@ -58,7 +58,7 @@ var securityGroupCache *cache.Cache
 var unavailableOfferingsCache *cache.Cache
 var fakeEC2API *fake.EC2API
 var provisioners *provisioning.Controller
-var selectionController *selection.Controller
+var selectionController *selection.Reconciler
 
 func TestAPIs(t *testing.T) {
 	ctx = TestContextWithLogger(t)

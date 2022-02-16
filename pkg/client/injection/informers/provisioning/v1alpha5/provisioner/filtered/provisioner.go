@@ -87,8 +87,6 @@ func Get(ctx context.Context, selector string) v1alpha5.ProvisionerInformer {
 type wrapper struct {
 	client versioned.Interface
 
-	namespace string
-
 	selector string
 }
 
@@ -103,17 +101,13 @@ func (w *wrapper) Lister() provisioningv1alpha5.ProvisionerLister {
 	return w
 }
 
-func (w *wrapper) Provisioners(namespace string) provisioningv1alpha5.ProvisionerNamespaceLister {
-	return &wrapper{client: w.client, namespace: namespace, selector: w.selector}
-}
-
 func (w *wrapper) List(selector labels.Selector) (ret []*apisprovisioningv1alpha5.Provisioner, err error) {
 	reqs, err := labels.ParseToRequirements(w.selector)
 	if err != nil {
 		return nil, err
 	}
 	selector = selector.Add(reqs...)
-	lo, err := w.client.KarpenterV1alpha5().Provisioners(w.namespace).List(context.TODO(), v1.ListOptions{
+	lo, err := w.client.KarpenterV1alpha5().Provisioners().List(context.TODO(), v1.ListOptions{
 		LabelSelector: selector.String(),
 		// TODO(mattmoor): Incorporate resourceVersion bounds based on staleness criteria.
 	})
@@ -128,7 +122,7 @@ func (w *wrapper) List(selector labels.Selector) (ret []*apisprovisioningv1alpha
 
 func (w *wrapper) Get(name string) (*apisprovisioningv1alpha5.Provisioner, error) {
 	// TODO(mattmoor): Check that the fetched object matches the selector.
-	return w.client.KarpenterV1alpha5().Provisioners(w.namespace).Get(context.TODO(), name, v1.GetOptions{
+	return w.client.KarpenterV1alpha5().Provisioners().Get(context.TODO(), name, v1.GetOptions{
 		// TODO(mattmoor): Incorporate resourceVersion bounds based on staleness criteria.
 	})
 }

@@ -19,9 +19,11 @@ import (
 	"strings"
 
 	"github.com/Pallinder/go-randomdata"
+	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/imdario/mergo"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/policy/v1beta1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -101,6 +103,19 @@ func Pods(total int, options ...PodOptions) []*v1.Pod {
 		}
 	}
 	return pods
+}
+
+func Provisioner() *v1alpha5.Provisioner {
+	return &v1alpha5.Provisioner{
+		ObjectMeta: metav1.ObjectMeta{Name: strings.ToLower(randomdata.SillyName())},
+		Spec: v1alpha5.ProvisionerSpec{
+			Limits: v1alpha5.Limits{
+				Resources: v1.ResourceList{
+					v1.ResourceCPU: *resource.NewScaledQuantity(10, 0),
+				},
+			},
+		},
+	}
 }
 
 // UnschedulablePod creates a test pod with a pending scheduling status condition
