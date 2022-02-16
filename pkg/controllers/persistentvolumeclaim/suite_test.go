@@ -26,12 +26,16 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes"
 	. "knative.dev/pkg/logging/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	// podinformer "github.com/aws/karpenter/pkg/k8sgen/informers/core/v1/pod"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
 )
 
 var ctx context.Context
-var controller *persistentvolumeclaim.Controller
+var pvccontroller *persistentvolumeclaim.Reconciler
 var env *test.Environment
 
 func TestAPIs(t *testing.T) {
@@ -42,7 +46,12 @@ func TestAPIs(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
-		controller = persistentvolumeclaim.NewController(e.Client)
+		// need to use the environment's modified context
+		ctx = e.Ctx
+		pvccontroller = &persistentvolumeclaim.Reconciler{
+			KubeClient: kubernetes.NewForConfigOrDie(e.Config),
+			PodLister:  podinformer.Get(ctx).Lister(),
+		}
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -64,7 +73,7 @@ var _ = Describe("Reconcile", func() {
 
 	It("should ignore a pvc without pods", func() {
 		ExpectCreated(ctx, env.Client, pvc)
-		ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(pvc))
+		ExpectReconcileSucceeded(ctx, pvccontroller, pvc)
 		Expect(env.Client.Get(ctx, client.ObjectKeyFromObject(pvc), pvc)).To(Succeed())
 		Expect(pvc.Annotations[persistentvolumeclaim.SelectedNodeAnnotation]).To(BeEmpty())
 	})
@@ -74,14 +83,15 @@ var _ = Describe("Reconcile", func() {
 			test.Pod(test.PodOptions{NodeName: strings.ToLower(randomdata.SillyName()), Phase: v1.PodSucceeded}),
 			test.Pod(test.PodOptions{NodeName: strings.ToLower(randomdata.SillyName()), Phase: v1.PodFailed}),
 		)
-		ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(pvc))
+		ExpectReconcileSucceeded(ctx, pvccontroller, pvc)
 		Expect(env.Client.Get(ctx, client.ObjectKeyFromObject(pvc), pvc)).To(Succeed())
 		Expect(pvc.Annotations[persistentvolumeclaim.SelectedNodeAnnotation]).To(BeEmpty())
 	})
 	It("should bind a pvc to a pod's node", func() {
 		pod := test.Pod(test.PodOptions{NodeName: strings.ToLower(randomdata.SillyName()), PersistentVolumeClaims: []string{pvc.Name}})
 		ExpectCreated(ctx, env.Client, pvc, pod)
-		ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(pvc))
+		ExpectPodExistsLister(ctx, pod.Name, pod.Namespace)
+		ExpectReconcileSucceeded(ctx, pvccontroller, pvc)
 		Expect(env.Client.Get(ctx, client.ObjectKeyFromObject(pvc), pvc)).To(Succeed())
 		Expect(pvc.Annotations[persistentvolumeclaim.SelectedNodeAnnotation]).To(Equal(pod.Spec.NodeName))
 	})

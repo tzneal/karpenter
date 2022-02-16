@@ -21,6 +21,7 @@ import (
 	"github.com/aws/karpenter/pkg/utils/project"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"knative.dev/pkg/injection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
@@ -66,6 +67,15 @@ type EnvironmentOption func(env *Environment)
 
 func NewEnvironment(ctx context.Context, options ...EnvironmentOption) *Environment {
 	ctx, stop := context.WithCancel(ctx)
+
+	// configure knative injection first
+	configureKnative := func(e *Environment) {
+		var startInformers func()
+		e.Ctx, startInformers = injection.EnableInjectionOrDie(ctx, e.Config)
+		startInformers()
+	}
+	options = append([]EnvironmentOption{configureKnative}, options...)
+
 	return &Environment{
 		Environment: envtest.Environment{
 			CRDDirectoryPaths: []string{project.RelativeToRoot("charts/karpenter/crds/karpenter.sh_provisioners.yaml")},

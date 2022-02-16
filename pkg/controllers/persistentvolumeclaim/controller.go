@@ -18,20 +18,25 @@ import (
 	"context"
 	"fmt"
 
+	pvcreconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/persistentvolumeclaim"
 	"github.com/aws/karpenter/pkg/utils/functional"
-	"github.com/aws/karpenter/pkg/utils/injection"
 	"github.com/aws/karpenter/pkg/utils/pod"
+	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	corev1 "k8s.io/client-go/listers/core/v1"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	pvcinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/persistentvolumeclaim"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
+	"knative.dev/pkg/reconciler"
 
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
@@ -39,76 +44,82 @@ const (
 	SelectedNodeAnnotation = "volume.kubernetes.io/selected-node"
 )
 
-// Controller for the resource
-type Controller struct {
-	kubeClient client.Client
+// Reconciler for the resource
+type Reconciler struct {
+	KubeClient kubernetes.Interface
+	PodLister  corev1.PodLister
 }
 
-// NewController is a constructor
-func NewController(kubeClient client.Client) *Controller {
-	return &Controller{kubeClient: kubeClient}
-}
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+	kubeClient := kubeclient.Get(ctx)
 
-// Register the controller to the manager
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named(controllerName).
-		For(&v1.PersistentVolumeClaim{}).
-		Watches(&source.Kind{Type: &v1.Pod{}}, handler.EnqueueRequestsFromMapFunc(c.pvcForPod)).
-		Complete(c)
-}
-
-// Reconcile a control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("resource", req.String()))
-	ctx = injection.WithNamespacedName(ctx, req.NamespacedName)
-	ctx = injection.WithControllerName(ctx, controllerName)
-
-	pvc := &v1.PersistentVolumeClaim{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, pvc); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
+	r := &Reconciler{
+		KubeClient: kubeClient,
+		PodLister:  podinformer.Get(ctx).Lister(),
 	}
+
+	impl := pvcreconciler.NewImpl(ctx, r)
+	impl.Name = controllerName
+
+	pvcinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	// enqueue PVCs that belong to updated pods
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.EnqueuePVCForPod(impl.EnqueueKey, logging.FromContext(ctx))))
+	return impl
+}
+
+func (c *Reconciler) EnqueuePVCForPod(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
+	return func(obj interface{}) {
+		for _, pvc := range c.pvcsForPod(obj.(*v1.Pod)) {
+			enqueueKey(pvc)
+		}
+	}
+}
+
+func (c *Reconciler) ReconcileKind(ctx context.Context, pvc *v1.PersistentVolumeClaim) reconciler.Event {
+	/*	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("resource", req.String()))
+		ctx = injection.WithNamespacedName(ctx, req.NamespacedName)
+		ctx = injection.WithControllerName(ctx, controllerName)
+	*/
+
 	pod, err := c.podForPvc(ctx, pvc)
 	if err != nil {
-		return reconcile.Result{}, err
+		return err
 	}
 	if pod == nil {
-		return reconcile.Result{}, nil
+		return nil
 	}
 	if nodeName, ok := pvc.Annotations[SelectedNodeAnnotation]; ok && nodeName == pod.Spec.NodeName {
-		return reconcile.Result{}, nil
+		return nil
 	}
 	if !c.isBindable(pod) {
-		return reconcile.Result{}, nil
+		return nil
 	}
 	pvc.Annotations = functional.UnionStringMaps(pvc.Annotations, map[string]string{SelectedNodeAnnotation: pod.Spec.NodeName})
-	if err := c.kubeClient.Update(ctx, pvc); err != nil {
-		return reconcile.Result{}, fmt.Errorf("binding persistent volume claim for pod %s/%s to node %q, %w", pod.Namespace, pod.Name, pod.Spec.NodeName, err)
+
+	if _, err := c.KubeClient.CoreV1().PersistentVolumeClaims(pvc.Namespace).Update(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("binding persistent volume claim for pod %s/%s to node %q, %w", pod.Namespace, pod.Name, pod.Spec.NodeName, err)
 	}
 	logging.FromContext(ctx).Infof("Bound persistent volume claim to node %s", pod.Spec.NodeName)
-	return reconcile.Result{}, nil
+	return nil
 }
 
-func (c *Controller) podForPvc(ctx context.Context, pvc *v1.PersistentVolumeClaim) (*v1.Pod, error) {
-	pods := &v1.PodList{}
-	if err := c.kubeClient.List(ctx, pods, client.InNamespace(pvc.Namespace)); err != nil {
+func (c *Reconciler) podForPvc(ctx context.Context, pvc *v1.PersistentVolumeClaim) (*v1.Pod, error) {
+	// (todd): TODO: podlister vs using the client itself?
+	pods, err := c.PodLister.Pods(pvc.Namespace).List(labels.Everything())
+	if err != nil {
 		return nil, err
 	}
-	for _, pod := range pods.Items {
+	for _, pod := range pods {
 		for _, volume := range pod.Spec.Volumes {
 			if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == pvc.Name {
-				return &pod, nil
+				return pod, nil
 			}
 		}
 	}
 	return nil, nil
 }
 
-func (c *Controller) pvcForPod(o client.Object) (requests []reconcile.Request) {
+func (c *Reconciler) pvcsForPod(o client.Object) (requests []types.NamespacedName) {
 	if !c.isBindable(o.(*v1.Pod)) {
 		return requests
 	}
@@ -116,11 +127,11 @@ func (c *Controller) pvcForPod(o client.Object) (requests []reconcile.Request) {
 		if volume.PersistentVolumeClaim == nil {
 			continue
 		}
-		requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: o.GetNamespace(), Name: volume.PersistentVolumeClaim.ClaimName}})
+		requests = append(requests, types.NamespacedName{Namespace: o.GetNamespace(), Name: volume.PersistentVolumeClaim.ClaimName})
 	}
 	return requests
 }
 
-func (c *Controller) isBindable(p *v1.Pod) bool {
+func (c *Reconciler) isBindable(p *v1.Pod) bool {
 	return pod.IsScheduled(p) && !pod.IsTerminal(p) && !pod.IsTerminating(p)
 }

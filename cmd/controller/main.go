@@ -91,10 +91,10 @@ func main() {
 	sharedmain.Main("controller",
 		provisioning.NewController,
 		selection.NewController,
+		persistentvolumeclaim.NewController,
 	)
 
 	if err := manager.RegisterControllers(ctx,
-		persistentvolumeclaim.NewController(manager.GetClient()),
 		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider),
 		node.NewController(manager.GetClient()),
 		metricspod.NewController(manager.GetClient()),

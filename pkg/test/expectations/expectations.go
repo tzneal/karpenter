@@ -24,6 +24,8 @@ import (
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/selection"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+
 	//nolint:revive,stylecheck
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -47,6 +49,12 @@ func ExpectProvisionerExists(ctx context.Context, c client.Client, name string) 
 	return prov
 }
 
+func ExpectPodExistsLister(ctx context.Context, name, namespace string) {
+	Eventually(func() bool {
+		pod, _ := podinformer.Get(ctx).Lister().Pods(namespace).Get(name)
+		return pod != nil
+	}).Should(BeTrue())
+}
 func ExpectPodExists(ctx context.Context, c client.Client, name string, namespace string) *v1.Pod {
 	pod := &v1.Pod{}
 	Expect(c.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, pod)).To(Succeed())
