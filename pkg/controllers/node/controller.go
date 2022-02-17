@@ -22,16 +22,14 @@ import (
 	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	provisioningclient "github.com/aws/karpenter/pkg/client/injection/client"
 	provisionerinformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
+	kc "github.com/aws/karpenter/pkg/controllers"
 	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
 	"github.com/aws/karpenter/pkg/utils/result"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	nodeinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/node"
@@ -54,8 +52,13 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	impl.Name = controllerName
 
 	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
-	provisionerinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForProvisioner(impl.EnqueueKey, logging.FromContext(ctx))))
-	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForPod(impl.EnqueueKey)))
+	// enqueue modes if their provisioner changes
+	provisionerinformer.Get(ctx).Informer().
+		AddEventHandler(controller.HandleAll(
+			kc.EnqueueNodeForProvisioner(r.kubeClient, impl.EnqueueKey, logging.FromContext(ctx))))
+	// or their pods change
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(
+		kc.EnqueueNodeForPod(impl.EnqueueKey)))
 	return impl
 }
 
@@ -142,34 +145,4 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, stored *v1.Node) reconci
 		return nil
 	}
 	return controller.NewRequeueAfter(minRes.RequeueAfter)
-}
-
-// enqueueNodeForProvisioner is used to reconcile all nodes related to a provisioner when it changes.
-func (c *Reconciler) enqueueNodeForProvisioner(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
-	return func(obj interface{}) {
-		prov := obj.(*v1alpha5.Provisioner)
-		// (todd) TODO: is SelectorFromValidatedSet correct?
-		selector := labels.SelectorFromValidatedSet(labels.Set{v1alpha5.ProvisionerNameLabelKey: prov.GetName()})
-		nodeList, err := c.kubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
-			LabelSelector: selector.String(),
-		})
-		if err != nil {
-			logger.Errorf("Failed to list nodes when mapping expiration watch events, %s", err)
-			return
-		}
-
-		for _, node := range nodeList.Items {
-			enqueueKey(types.NamespacedName{Name: node.Name})
-		}
-	}
-}
-
-// enqueueNodeForPod reconciles the node when a pod assigned to it changes.
-func (c *Reconciler) enqueueNodeForPod(enqueueKey func(key types.NamespacedName)) func(interface{}) {
-	return func(obj interface{}) {
-		pod := obj.(*v1.Pod)
-		if pod.Spec.NodeName != "" {
-			enqueueKey(types.NamespacedName{Name: pod.Spec.NodeName})
-		}
-	}
 }

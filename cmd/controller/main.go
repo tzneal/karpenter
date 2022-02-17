@@ -95,12 +95,11 @@ func main() {
 		node.NewController,
 		counter.NewController,
 		metricspod.NewController,
+		metricsnode.NewController,
 	)
 
 	if err := manager.RegisterControllers(ctx,
-		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider),
-		metricsnode.NewController(manager.GetClient()),
-	).Start(ctx); err != nil {
+		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider)).Start(ctx); err != nil {
 		panic(fmt.Sprintf("Unable to start manager, %s", err))
 	}
 }

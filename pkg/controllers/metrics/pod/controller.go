@@ -86,6 +86,9 @@ func labelNames() []string {
 	}
 }
 
+var _ podreconciler.Interface = (*Reconciler)(nil)
+var _ podreconciler.Finalizer = (*Reconciler)(nil)
+
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	r := NewReconciler(ctx)
@@ -116,6 +119,13 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.
 
 	// Retrieve pod from reconcile request
 	c.record(ctx, pod)
+	return nil
+}
+
+func (c *Reconciler) FinalizeKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
+	if labels, ok := c.LabelsMap[client.ObjectKeyFromObject(pod)]; ok {
+		podGaugeVec.Delete(labels)
+	}
 	return nil
 }
 

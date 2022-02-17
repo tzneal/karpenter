@@ -19,22 +19,28 @@ import (
 	"fmt"
 	"strings"
 
+	provisionerinformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
+	kc "github.com/aws/karpenter/pkg/controllers"
+	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	nodeinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/node"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
+	"knative.dev/pkg/reconciler"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	podutil "github.com/aws/karpenter/pkg/utils/pod"
 	"github.com/aws/karpenter/pkg/utils/resources"
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 const (
@@ -127,73 +133,55 @@ func labelNames() []string {
 	}
 }
 
-type Controller struct {
-	KubeClient      client.Client
+var _ nodereconciler.Interface = (*Reconciler)(nil)
+var _ nodereconciler.Finalizer = (*Reconciler)(nil)
+
+type Reconciler struct {
+	kubeClient      kubernetes.Interface
 	LabelCollection map[types.NamespacedName][]prometheus.Labels
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) *Controller {
-	return &Controller{
-		KubeClient:      kubeClient,
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+	r := NewReconciler(ctx)
+	impl := nodereconciler.NewImpl(ctx, r)
+	impl.Name = "nodemetrics"
+
+	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	provisionerinformer.Get(ctx).Informer().
+		AddEventHandler(controller.HandleAll(kc.EnqueueNodeForProvisioner(r.kubeClient, impl.EnqueueKey, logging.FromContext(ctx))))
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(
+		kc.EnqueueNodeForPod(impl.EnqueueKey)))
+	return impl
+}
+
+// NewReconciler constructs a controller instance
+func NewReconciler(ctx context.Context) *Reconciler {
+	return &Reconciler{
+		kubeClient:      kubeclient.Get(ctx),
 		LabelCollection: make(map[types.NamespacedName][]prometheus.Labels),
 	}
 }
 
-// Reconcile executes a termination control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("nodemetrics").With("node", req.Name))
+func (c *Reconciler) FinalizeKind(ctx context.Context, node *v1.Node) reconciler.Event {
+	c.cleanup(client.ObjectKeyFromObject(node))
+	return nil
+}
+
+// ReconcileKind executes a termination control loop for the resource
+func (c *Reconciler) ReconcileKind(ctx context.Context, node *v1.Node) reconciler.Event {
+	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("nodemetrics").With("node", req.Name))
+
 	// Remove the previous gauge after node labels are updated
-	c.cleanup(req.NamespacedName)
-	// Retrieve node from reconcile request
-	node := &v1.Node{}
-	if err := c.KubeClient.Get(ctx, req.NamespacedName, node); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
+	c.cleanup(client.ObjectKeyFromObject(node))
+
 	if err := c.record(ctx, node); err != nil {
 		logging.FromContext(ctx).Errorf("Failed to update gauges: %s", err)
-		return reconcile.Result{}, err
+		return err
 	}
-	return reconcile.Result{}, nil
+	return nil
 }
-
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named("nodemetrics").
-		For(&v1.Node{}).
-		Watches(
-			// Reconcile all nodes related to a provisioner when it changes.
-			&source.Kind{Type: &v1alpha5.Provisioner{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) (requests []reconcile.Request) {
-				nodes := &v1.NodeList{}
-				if err := c.KubeClient.List(ctx, nodes, client.MatchingLabels(map[string]string{v1alpha5.ProvisionerNameLabelKey: o.GetName()})); err != nil {
-					logging.FromContext(ctx).Errorf("Failed to list nodes when mapping expiration watch events, %s", err)
-					return requests
-				}
-				for _, node := range nodes.Items {
-					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: node.Name}})
-				}
-				return requests
-			}),
-		).
-		Watches(
-			// Reconcile nodes where pods have changed
-			&source.Kind{Type: &v1.Pod{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) (requests []reconcile.Request) {
-				if name := o.(*v1.Pod).Spec.NodeName; name != "" {
-					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
-				}
-				return requests
-			}),
-		).
-		Complete(c)
-}
-
-func (c *Controller) cleanup(nodeNamespacedName types.NamespacedName) {
+func (c *Reconciler) cleanup(nodeNamespacedName types.NamespacedName) {
 	if labelSet, ok := c.LabelCollection[nodeNamespacedName]; ok {
 		for _, labels := range labelSet {
 			allocatableGaugeVec.Delete(labels)
@@ -208,7 +196,7 @@ func (c *Controller) cleanup(nodeNamespacedName types.NamespacedName) {
 }
 
 // labels creates the labels using the current state of the pod
-func (c *Controller) labels(node *v1.Node, resourceTypeName string) prometheus.Labels {
+func (c *Reconciler) labels(node *v1.Node, resourceTypeName string) prometheus.Labels {
 	metricLabels := prometheus.Labels{}
 	metricLabels[resourceType] = resourceTypeName
 	metricLabels[nodeName] = node.GetName()
@@ -229,9 +217,11 @@ func (c *Controller) labels(node *v1.Node, resourceTypeName string) prometheus.L
 	return metricLabels
 }
 
-func (c *Controller) record(ctx context.Context, node *v1.Node) error {
-	podlist := &v1.PodList{}
-	if err := c.KubeClient.List(ctx, podlist, client.MatchingFields{"spec.nodeName": node.Name}); err != nil {
+func (c *Reconciler) record(ctx context.Context, node *v1.Node) error {
+	podlist, err := c.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.Set{"spec.nodeName": node.Name}.String(),
+	})
+	if err != nil {
 		return fmt.Errorf("listing pods on node %s, %w", node.Name, err)
 	}
 	var daemons, pods []*v1.Pod
@@ -281,7 +271,7 @@ func getSystemOverhead(node *v1.Node) v1.ResourceList {
 }
 
 // set sets the value for the node gauge
-func (c *Controller) set(resourceList v1.ResourceList, node *v1.Node, gaugeVec *prometheus.GaugeVec) error {
+func (c *Reconciler) set(resourceList v1.ResourceList, node *v1.Node, gaugeVec *prometheus.GaugeVec) error {
 	for resourceName, quantity := range resourceList {
 		resourceTypeName := strings.ReplaceAll(strings.ToLower(string(resourceName)), "-", "_")
 		labels := c.labels(node, resourceTypeName)
