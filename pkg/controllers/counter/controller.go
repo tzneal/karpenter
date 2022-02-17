@@ -11,67 +11,91 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package counter
 
 import (
 	"context"
 	"fmt"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/types"
-	controllerruntime "sigs.k8s.io/controller-runtime"
-
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
+	provisioningclient "github.com/aws/karpenter/pkg/client/injection/client"
+	provisioninginformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
+	provisioningreconciler "github.com/aws/karpenter/pkg/client/injection/reconciler/provisioning/v1alpha5/provisioner"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	nodeinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/node"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
+	"knative.dev/pkg/reconciler"
 )
 
-// Controller for the resource
-type Controller struct {
-	kubeClient client.Client
+// Reconciler for the resource
+type Reconciler struct {
+	kubeClient kubernetes.Interface
+	karpClient versioned.Interface
 }
 
-// NewController is a constructor
-func NewController(kubeClient client.Client) *Controller {
-	return &Controller{
-		kubeClient: kubeClient,
+// NewController constructs a controller instance
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+
+	r := NewReconciler(ctx)
+	impl := provisioningreconciler.NewImpl(ctx, r)
+	impl.Name = "counter"
+
+	provisioninginformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+
+	// reconcile the provisioner if nodes arr added/removed
+	enqueueProvisionerForNode := r.enqueueProvisionerForNode(impl.EnqueueKey)
+	nodeinformer.Get(ctx).Informer().AddEventHandler(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: enqueueProvisionerForNode,
+			// No need to reconcile the provisioner when nodes are updated since those don't affect the status of the provisioner.
+			UpdateFunc: nil,
+			DeleteFunc: enqueueProvisionerForNode,
+		})
+	return impl
+}
+
+func NewReconciler(ctx context.Context) *Reconciler {
+	return &Reconciler{
+		kubeClient: kubeclient.Get(ctx),
+		karpClient: provisioningclient.Get(ctx),
 	}
 }
 
-// Reconcile a control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	provisioner := &v1alpha5.Provisioner{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, provisioner); err != nil {
-		if !errors.IsNotFound(err) {
-			return reconcile.Result{}, err
-		}
-		return reconcile.Result{}, nil
-	}
-	persisted := provisioner.DeepCopy()
+// ReconcileKind reconciles the provisioner
+func (c *Reconciler) ReconcileKind(ctx context.Context, provisioner *v1alpha5.Provisioner) reconciler.Event {
+
 	// Determine resource usage and update provisioner.status.resources
 	resourceCounts, err := c.resourceCountsFor(ctx, provisioner.Name)
 	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("computing resource usage, %w", err)
+		return fmt.Errorf("computing resource usage, %w", err)
 	}
+	// (todd) TODO: should just be able to directly update status here without the patch
 	provisioner.Status.Resources = resourceCounts
+	// persisted := provisioner.DeepCopy()
+	//
+	/*c.karpClient.KarpenterV1alpha5().Provisioners().UpdateStatus(ctx, provisioner)
 	if err := c.kubeClient.Status().Patch(ctx, provisioner, client.MergeFrom(persisted)); err != nil {
-		return reconcile.Result{}, fmt.Errorf("patching provisioner, %w", err)
-	}
-	return reconcile.Result{}, nil
+		return fmt.Errorf("patching provisioner, %w", err)
+	}*/
+	return nil
 }
 
-func (c *Controller) resourceCountsFor(ctx context.Context, provisionerName string) (v1.ResourceList, error) {
-	nodes := v1.NodeList{}
-	if err := c.kubeClient.List(ctx, &nodes, client.MatchingLabels{v1alpha5.ProvisionerNameLabelKey: provisionerName}); err != nil {
+func (c *Reconciler) resourceCountsFor(ctx context.Context, provisionerName string) (v1.ResourceList, error) {
+	// (todd) TODO: label selector correct?
+	nodes, err := c.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set{v1alpha5.ProvisionerNameLabelKey: provisionerName}).String(),
+	})
+	if err != nil {
 		return nil, err
 	}
 	var cpu = resource.NewScaledQuantity(0, 0)
@@ -86,27 +110,11 @@ func (c *Controller) resourceCountsFor(ctx context.Context, provisionerName stri
 	}, nil
 }
 
-// Register the controller to the manager
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named("counter").
-		For(&v1alpha5.Provisioner{}).
-		WithEventFilter(predicate.Funcs{
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				// No need to reconcile the provisioner when nodes are updated since those don't affect the status of the provisioner.
-				return false
-			},
-		}).
-		Watches(
-			&source.Kind{Type: &v1.Node{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) []reconcile.Request {
-				if name, ok := o.GetLabels()[v1alpha5.ProvisionerNameLabelKey]; ok {
-					return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name}}}
-				}
-				return nil
-			}),
-		).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 10}).
-		Complete(c)
+func (c *Reconciler) enqueueProvisionerForNode(enqueueKey func(key types.NamespacedName)) func(interface{}) {
+	return func(obj interface{}) {
+		node := obj.(*v1.Node)
+		if name, ok := node.GetLabels()[v1alpha5.ProvisionerNameLabelKey]; ok {
+			enqueueKey(types.NamespacedName{Name: name})
+		}
+	}
 }

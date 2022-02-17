@@ -93,13 +93,13 @@ func main() {
 		selection.NewController,
 		persistentvolumeclaim.NewController,
 		node.NewController,
+		counter.NewController,
 	)
 
 	if err := manager.RegisterControllers(ctx,
 		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider),
 		metricspod.NewController(manager.GetClient()),
 		metricsnode.NewController(manager.GetClient()),
-		counter.NewController(manager.GetClient()),
 	).Start(ctx); err != nil {
 		panic(fmt.Sprintf("Unable to start manager, %s", err))
 	}

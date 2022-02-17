@@ -55,7 +55,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 	provisionerinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForProvisioner(impl.EnqueueKey, logging.FromContext(ctx))))
-	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForPod(impl.EnqueueKey, logging.FromContext(ctx))))
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForPod(impl.EnqueueKey)))
 	return impl
 }
 
@@ -165,7 +165,7 @@ func (c *Reconciler) enqueueNodeForProvisioner(enqueueKey func(key types.Namespa
 }
 
 // enqueueNodeForPod reconciles the node when a pod assigned to it changes.
-func (c *Reconciler) enqueueNodeForPod(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
+func (c *Reconciler) enqueueNodeForPod(enqueueKey func(key types.NamespacedName)) func(interface{}) {
 	return func(obj interface{}) {
 		pod := obj.(*v1.Pod)
 		if pod.Spec.NodeName != "" {
