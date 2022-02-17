@@ -46,7 +46,6 @@ const controllerName = "node"
 
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-
 	r := NewReconciler(ctx)
 	impl := nodereconciler.NewImpl(ctx, r)
 	impl.Name = controllerName

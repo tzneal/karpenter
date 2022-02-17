@@ -57,7 +57,7 @@ var launchTemplateCache *cache.Cache
 var securityGroupCache *cache.Cache
 var unavailableOfferingsCache *cache.Cache
 var fakeEC2API *fake.EC2API
-var provisioners *provisioning.Controller
+var provisioners *provisioning.Reconciler
 var selectionController *selection.Reconciler
 
 func TestAPIs(t *testing.T) {

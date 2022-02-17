@@ -17,9 +17,13 @@ package termination
 import (
 	"context"
 	"fmt"
+	"log"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"knative.dev/pkg/logging"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,21 +38,31 @@ import (
 
 type Terminator struct {
 	EvictionQueue *EvictionQueue
-	KubeClient    client.Client
+	KubeClient    kubernetes.Interface
 	CoreV1Client  corev1.CoreV1Interface
 	CloudProvider cloudprovider.CloudProvider
 }
 
 // cordon cordons a node
 func (t *Terminator) cordon(ctx context.Context, node *v1.Node) error {
+	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("node", node.Name))
+
 	// 1. Check if node is already cordoned
 	if node.Spec.Unschedulable {
 		return nil
 	}
+
 	// 2. Cordon node
 	persisted := node.DeepCopy()
 	node.Spec.Unschedulable = true
-	if err := t.KubeClient.Patch(ctx, node, client.MergeFrom(persisted)); err != nil {
+
+	// TODO (todd): does this patch work?
+	patch := client.MergeFrom(persisted)
+	data, err := patch.Data(node)
+	if err != nil {
+		return fmt.Errorf("error creating patch: %w", err)
+	}
+	if _, err := t.KubeClient.CoreV1().Nodes().Patch(ctx, node.Name, patch.Type(), data, metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patching node %s, %w", node.Name, err)
 	}
 	logging.FromContext(ctx).Infof("Cordoned node")
@@ -77,6 +91,7 @@ func (t *Terminator) drain(ctx context.Context, node *v1.Node) (bool, error) {
 
 // terminate calls cloud provider delete then removes the finalizer to delete the node
 func (t *Terminator) terminate(ctx context.Context, node *v1.Node) error {
+	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("node", node.Name))
 	// 1. Delete the instance associated with node
 	if err := t.CloudProvider.Delete(ctx, node); err != nil {
 		return fmt.Errorf("terminating cloudprovider instance, %w", err)
@@ -84,7 +99,14 @@ func (t *Terminator) terminate(ctx context.Context, node *v1.Node) error {
 	// 2. Remove finalizer from node in APIServer
 	persisted := node.DeepCopy()
 	node.Finalizers = functional.StringSliceWithout(node.Finalizers, v1alpha5.TerminationFinalizer)
-	if err := t.KubeClient.Patch(ctx, node, client.MergeFrom(persisted)); err != nil {
+
+	// TODO (todd): does this patch work?
+	patch := client.MergeFrom(persisted)
+	data, err := patch.Data(node)
+	if err != nil {
+		return fmt.Errorf("error creating patch: %w", err)
+	}
+	if _, err := t.KubeClient.CoreV1().Nodes().Patch(ctx, node.Name, patch.Type(), data, metav1.PatchOptions{}); err != nil {
 		if errors.IsNotFound(err) {
 			return nil
 		}
@@ -96,11 +118,14 @@ func (t *Terminator) terminate(ctx context.Context, node *v1.Node) error {
 
 // getPods returns a list of evictable pods for the node
 func (t *Terminator) getPods(ctx context.Context, node *v1.Node) ([]*v1.Pod, error) {
-	podList := &v1.PodList{}
-	if err := t.KubeClient.List(ctx, podList, client.MatchingFields{"spec.nodeName": node.Name}); err != nil {
+	podList, err := t.KubeClient.CoreV1().Pods(v1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.Set{"spec.nodeName": node.Name}.String(),
+	})
+
+	if err != nil {
 		return nil, fmt.Errorf("listing pods on node, %w", err)
 	}
-	pods := []*v1.Pod{}
+	var pods []*v1.Pod
 	for _, p := range podList.Items {
 		// Ignore if unschedulable is tolerated, since they will reschedule
 		if (v1alpha5.Taints{{Key: v1.TaintNodeUnschedulable, Effect: v1.TaintEffectNoSchedule}}).Tolerates(ptr.Pod(p)) == nil {

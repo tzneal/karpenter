@@ -88,6 +88,7 @@ func main() {
 		HealthProbeBindAddress: fmt.Sprintf(":%d", opts.HealthProbePort),
 	})
 
+	_ = manager
 	sharedmain.Main("controller",
 		provisioning.NewController,
 		selection.NewController,
@@ -96,12 +97,8 @@ func main() {
 		counter.NewController,
 		metricspod.NewController,
 		metricsnode.NewController,
+		termination.NewController,
 	)
-
-	if err := manager.RegisterControllers(ctx,
-		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider)).Start(ctx); err != nil {
-		panic(fmt.Sprintf("Unable to start manager, %s", err))
-	}
 }
 
 // LoggingContextOrDie injects a logger into the returned context. The logger is
