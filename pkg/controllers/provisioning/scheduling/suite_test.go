@@ -22,29 +22,31 @@ import (
 
 	"github.com/Pallinder/go-randomdata"
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/cloudprovider"
 	"github.com/aws/karpenter/pkg/cloudprovider/fake"
 	"github.com/aws/karpenter/pkg/cloudprovider/registry"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/provisioning/scheduling"
 	"github.com/aws/karpenter/pkg/controllers/selection"
 	"github.com/aws/karpenter/pkg/test"
+	"k8s.io/client-go/kubernetes"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	. "github.com/aws/karpenter/pkg/test/expectations"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	. "knative.dev/pkg/logging/testing"
 )
 
 var ctx context.Context
 var provisioner *v1alpha5.Provisioner
-var provisioners *provisioning.Controller
+var provisioners *provisioning.Reconciler
 var selectionController *selection.Reconciler
 var env *test.Environment
+var kubeClient kubernetes.Interface
 
 func TestAPIs(t *testing.T) {
 	ctx = TestContextWithLogger(t)
@@ -54,10 +56,14 @@ func TestAPIs(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
+		ctx = e.Ctx
+		kubeClient = kubeclient.Get(ctx)
 		cloudProvider := &fake.CloudProvider{}
+		ctx = provisioning.WithProvisioners(ctx, provisioning.NewProvisioners())
+		ctx = cloudprovider.WithCloudProvider(ctx, cloudProvider)
 		registry.RegisterOrDie(ctx, cloudProvider)
-		provisioners = provisioning.NewController(ctx, e.Client, corev1.NewForConfigOrDie(e.Config), cloudProvider)
-		selectionController = selection.NewController(e.Client, provisioners)
+		provisioners = provisioning.NewReconciler(ctx)
+		selectionController = selection.NewReconciler(ctx)
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -771,8 +777,8 @@ func MakePods(count int, options test.PodOptions) (pods []*v1.Pod) {
 func ExpectSkew(ctx context.Context, c client.Client, namespace string, constraint *v1.TopologySpreadConstraint) Assertion {
 	nodes := &v1.NodeList{}
 	Expect(c.List(ctx, nodes)).To(Succeed())
-	pods := &v1.PodList{}
-	Expect(c.List(ctx, pods, scheduling.TopologyListOptions(namespace, constraint))).To(Succeed())
+	pods, err := kubeClient.CoreV1().Pods(namespace).List(ctx, scheduling.TopologyListOptions(constraint))
+	Expect(err).To(BeNil())
 	skew := map[string]int{}
 	for i, pod := range pods.Items {
 		if scheduling.IgnoredForTopology(&pods.Items[i]) {

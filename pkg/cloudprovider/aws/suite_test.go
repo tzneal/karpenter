@@ -25,6 +25,7 @@ import (
 	"github.com/Pallinder/go-randomdata"
 	"github.com/aws/amazon-vpc-resource-controller-k8s/pkg/aws/vpc"
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/cloudprovider"
 	"github.com/aws/karpenter/pkg/cloudprovider/aws/apis/v1alpha1"
 	"github.com/aws/karpenter/pkg/cloudprovider/aws/fake"
 	"github.com/aws/karpenter/pkg/cloudprovider/registry"
@@ -68,6 +69,8 @@ func TestAPIs(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
+		ctx = e.Ctx
+
 		opts = options.Options{
 			ClusterName:               "test-cluster",
 			ClusterEndpoint:           "https://test-cluster",
@@ -106,8 +109,10 @@ var _ = BeforeSuite(func() {
 			},
 		}
 		registry.RegisterOrDie(ctx, cloudProvider)
-		provisioners = provisioning.NewController(ctx, e.Client, clientSet.CoreV1(), cloudProvider)
-		selectionController = selection.NewController(e.Client, provisioners)
+		ctx = provisioning.WithProvisioners(ctx, provisioning.NewProvisioners())
+		ctx = cloudprovider.WithCloudProvider(ctx, cloudProvider)
+		provisioners = provisioning.NewReconciler(ctx)
+		selectionController = selection.NewReconciler(ctx)
 	})
 
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")

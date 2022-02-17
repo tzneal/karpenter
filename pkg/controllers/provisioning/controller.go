@@ -30,18 +30,22 @@ var _ provisioningreconciler.Interface = (*Reconciler)(nil)
 var _ provisioningreconciler.Finalizer = (*Reconciler)(nil)
 
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-	kubeClient := kubeclient.Get(ctx)
-
-	r := &Reconciler{
-		KarpClient:    provisioningclient.Get(ctx),
-		KubeClient:    kubeClient,
-		Provisioners:  GetProvisioners(ctx),
-		CloudProvider: cloudprovider.GetCloudProvider(ctx),
-	}
+	r := NewReconciler(ctx)
 
 	impl := provisioningreconciler.NewImpl(ctx, r)
 	impl.Name = "provisioning"
 
 	provisioninginformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 	return impl
+}
+
+func NewReconciler(ctx context.Context) *Reconciler {
+	kubeClient := kubeclient.Get(ctx)
+
+	return &Reconciler{
+		KarpClient:    provisioningclient.Get(ctx),
+		KubeClient:    kubeClient,
+		Provisioners:  GetProvisioners(ctx),
+		CloudProvider: cloudprovider.GetCloudProvider(ctx),
+	}
 }

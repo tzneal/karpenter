@@ -180,7 +180,7 @@ var _ = Describe("Termination", func() {
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			// Simulate stuck terminating
 			injectabletime.Now = func() time.Time { return time.Now().Add(1 * time.Minute) }
-			ExpectReconcileSucceeded(ctx, controller, node)
+			ExpectFinalizeSucceeded(ctx, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should fail to evict pods that violate a PDB", func() {

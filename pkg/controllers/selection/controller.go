@@ -33,6 +33,7 @@ import (
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/reconciler"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Reconciler for the resource
@@ -44,14 +45,7 @@ type Reconciler struct {
 }
 
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-	kubeClient := kubeclient.Get(ctx)
-
-	r := &Reconciler{
-		KubeClient:     kubeClient,
-		Provisioners:   provisioning.GetProvisioners(ctx),
-		Preferences:    NewPreferences(),
-		VolumeTopology: NewVolumeTopology(kubeClient),
-	}
+	r := NewReconciler(ctx)
 
 	impl := podreconciler.NewImpl(ctx, r)
 	impl.Name = "selection"
@@ -59,9 +53,18 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	return impl
 }
 
+func NewReconciler(ctx context.Context) *Reconciler {
+	kubeClient := kubeclient.Get(ctx)
+	return &Reconciler{
+		KubeClient:     kubeClient,
+		Provisioners:   provisioning.GetProvisioners(ctx),
+		Preferences:    NewPreferences(),
+		VolumeTopology: NewVolumeTopology(kubeClient),
+	}
+}
+
 func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
-	// (todd) TODO: does knative already add to the logger?
-	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("pod", req.String()))
+	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("pod", client.ObjectKeyFromObject(pod)))
 
 	// Ensure the pod can be provisioned
 	if !isProvisionable(pod) {
