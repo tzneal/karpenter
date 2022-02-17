@@ -45,7 +45,6 @@ type Reconciler struct {
 
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-
 	r := NewReconciler(ctx)
 	impl := provisioningreconciler.NewImpl(ctx, r)
 	impl.Name = "counter"

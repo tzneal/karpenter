@@ -19,18 +19,21 @@ import (
 	"fmt"
 	"strings"
 
-	"knative.dev/pkg/logging"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	podreconciler "knative.dev/pkg/client/injection/kube/reconciler/core/v1/pod"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
+	"knative.dev/pkg/reconciler"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -58,9 +61,9 @@ var (
 	)
 )
 
-// Controller for the resource
-type Controller struct {
-	KubeClient client.Client
+// Reconciler for the resource
+type Reconciler struct {
+	KubeClient kubernetes.Interface
 	LabelsMap  map[types.NamespacedName]prometheus.Labels
 }
 
@@ -84,48 +87,46 @@ func labelNames() []string {
 }
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) *Controller {
-	return &Controller{
-		KubeClient: kubeClient,
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+	r := NewReconciler(ctx)
+	impl := podreconciler.NewImpl(ctx, r)
+	impl.Name = "podmetrics"
+
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	return impl
+}
+
+// NewReconciler constructs a new Reconciler and is exposed for testing only
+func NewReconciler(ctx context.Context) *Reconciler {
+	return &Reconciler{
+		KubeClient: kubeclient.Get(ctx),
 		LabelsMap:  make(map[types.NamespacedName]prometheus.Labels),
 	}
 }
 
-// Reconcile executes a termination control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("podmetrics").With("pod", req.Name))
+// ReconcileKind executes a termination control loop for the resource
+func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
+
+	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("podmetrics").With("pod", req.Name))
+
 	// Remove the previous gauge after pod labels are updated
-	if labels, ok := c.LabelsMap[req.NamespacedName]; ok {
+	if labels, ok := c.LabelsMap[client.ObjectKeyFromObject(pod)]; ok {
 		podGaugeVec.Delete(labels)
 	}
+
 	// Retrieve pod from reconcile request
-	pod := &v1.Pod{}
-	if err := c.KubeClient.Get(ctx, req.NamespacedName, pod); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
 	c.record(ctx, pod)
-	return reconcile.Result{}, nil
+	return nil
 }
 
-func (c *Controller) record(ctx context.Context, pod *v1.Pod) {
+func (c *Reconciler) record(ctx context.Context, pod *v1.Pod) {
 	labels := c.labels(ctx, pod)
 	podGaugeVec.With(labels).Set(float64(1))
 	c.LabelsMap[client.ObjectKeyFromObject(pod)] = labels
 }
 
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named("podmetrics").
-		For(&v1.Pod{}).
-		Complete(c)
-}
-
 // labels creates the labels using the current state of the pod
-func (c *Controller) labels(ctx context.Context, pod *v1.Pod) prometheus.Labels {
+func (c *Reconciler) labels(ctx context.Context, pod *v1.Pod) prometheus.Labels {
 	metricLabels := prometheus.Labels{}
 	metricLabels[podName] = pod.GetName()
 	metricLabels[podNameSpace] = pod.GetNamespace()
@@ -141,7 +142,8 @@ func (c *Controller) labels(ctx context.Context, pod *v1.Pod) prometheus.Labels 
 	metricLabels[podHostName] = pod.Spec.NodeName
 	metricLabels[podPhase] = string(pod.Status.Phase)
 	node := &v1.Node{}
-	if err := c.KubeClient.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, node); err != nil {
+	node, err := c.KubeClient.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+	if err != nil {
 		metricLabels[podHostZone] = "N/A"
 		metricLabels[podHostArchitecture] = "N/A"
 		metricLabels[podHostCapacityType] = "N/A"
