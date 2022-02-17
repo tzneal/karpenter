@@ -88,7 +88,7 @@ func NewProvisioners() *Provisioners {
 	}
 }
 
-func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kubeClient kubernetes.Interface, coreV1Client *versioned.Clientset, cloudProvider cloudprovider.CloudProvider) *Provisioner {
+func NewProvisioner(ctx context.Context, provisioner *v1alpha5.Provisioner, kubeClient kubernetes.Interface, coreV1Client versioned.Interface, cloudProvider cloudprovider.CloudProvider) *Provisioner {
 	running, stop := context.WithCancel(ctx)
 	p := &Provisioner{
 		Provisioner:   provisioner,
@@ -120,7 +120,7 @@ type Provisioner struct {
 	// Dependencies
 	cloudProvider cloudprovider.CloudProvider
 	kubeClient    kubernetes.Interface
-	karpClient    *versioned.Clientset
+	karpClient    versioned.Interface
 	scheduler     *scheduling.Scheduler
 	packer        *binpacking.Packer
 }
@@ -138,7 +138,7 @@ func (p *Provisioner) provision(ctx context.Context) (err error) {
 	defer p.batcher.Flush()
 	logging.FromContext(ctx).Infof("Batched %d pods in %s", len(items), window)
 	// Filter pods
-	pods := []*v1.Pod{}
+	var pods []*v1.Pod
 	for _, item := range items {
 		provisionable, err := p.isProvisionable(ctx, item.(*v1.Pod))
 		if err != nil {

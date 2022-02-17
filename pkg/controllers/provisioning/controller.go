@@ -17,7 +17,7 @@ package provisioning
 import (
 	"context"
 
-	"github.com/aws/karpenter/pkg/client/clientset/versioned"
+	provisioningclient "github.com/aws/karpenter/pkg/client/injection/client"
 	provisioninginformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
 	provisioningreconciler "github.com/aws/karpenter/pkg/client/injection/reconciler/provisioning/v1alpha5/provisioner"
 	"github.com/aws/karpenter/pkg/cloudprovider"
@@ -33,7 +33,7 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 	kubeClient := kubeclient.Get(ctx)
 
 	r := &Reconciler{
-		KarpClient:    versioned.New(kubeClient.CoreV1().RESTClient()),
+		KarpClient:    provisioningclient.Get(ctx),
 		KubeClient:    kubeClient,
 		Provisioners:  GetProvisioners(ctx),
 		CloudProvider: cloudprovider.GetCloudProvider(ctx),

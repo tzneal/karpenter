@@ -18,29 +18,53 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
+	provisioningclient "github.com/aws/karpenter/pkg/client/injection/client"
+	provisionerinformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
+	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
+	"github.com/aws/karpenter/pkg/utils/result"
 	"go.uber.org/multierr"
+	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	kubeclient "knative.dev/pkg/client/injection/kube/client"
+	nodeinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/node"
+	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	"knative.dev/pkg/configmap"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
-	controllerruntime "sigs.k8s.io/controller-runtime"
+	"knative.dev/pkg/reconciler"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
-
-	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
-	"github.com/aws/karpenter/pkg/utils/result"
 )
 
 const controllerName = "node"
 
 // NewController constructs a controller instance
-func NewController(kubeClient client.Client) *Controller {
-	return &Controller{
+func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
+
+	r := NewReconciler(ctx)
+	impl := nodereconciler.NewImpl(ctx, r)
+	impl.Name = controllerName
+
+	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
+	provisionerinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForProvisioner(impl.EnqueueKey, logging.FromContext(ctx))))
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.enqueueNodeForPod(impl.EnqueueKey, logging.FromContext(ctx))))
+	return impl
+}
+
+// NewReconciler creates a new Node Reconciler and is exposed for testing purposes only
+func NewReconciler(ctx context.Context) *Reconciler {
+	kubeClient := kubeclient.Get(ctx)
+
+	return &Reconciler{
+		KarpClient:     provisioningclient.Get(ctx),
 		kubeClient:     kubeClient,
 		initialization: &Initialization{kubeClient: kubeClient},
 		emptiness:      &Emptiness{kubeClient: kubeClient},
@@ -48,48 +72,43 @@ func NewController(kubeClient client.Client) *Controller {
 	}
 }
 
-// Controller manages a set of properties on karpenter provisioned nodes, such as
+// Reconciler manages a set of properties on karpenter provisioned nodes, such as
 // taints, labels, finalizers.
-type Controller struct {
-	kubeClient     client.Client
+type Reconciler struct {
+	kubeClient     kubernetes.Interface
 	initialization *Initialization
 	emptiness      *Emptiness
 	expiration     *Expiration
 	finalizer      *Finalizer
+	KarpClient     versioned.Interface
 }
 
-// Reconcile executes a reallocation control loop for the resource
-func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("node", req.Name))
-	// 1. Retrieve Node, ignore if not provisioned or terminating
-	stored := &v1.Node{}
-	if err := c.kubeClient.Get(ctx, req.NamespacedName, stored); err != nil {
-		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
-		}
-		return reconcile.Result{}, err
-	}
+// ReconcileKind executes a reallocation control loop for the resource
+func (c *Reconciler) ReconcileKind(ctx context.Context, stored *v1.Node) reconciler.Event {
+
+	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named(controllerName).With("node", req.Name))
+
+	// 1. Retrieve Node, ignore if not provisioned (nodes with a deletion timestamp aren't passed into reconcileKind)
 	if _, ok := stored.Labels[v1alpha5.ProvisionerNameLabelKey]; !ok {
-		return reconcile.Result{}, nil
-	}
-	if !stored.DeletionTimestamp.IsZero() {
-		return reconcile.Result{}, nil
+		return nil
 	}
 
 	// 2. Retrieve Provisioner
-	provisioner := &v1alpha5.Provisioner{}
-	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: stored.Labels[v1alpha5.ProvisionerNameLabelKey]}, provisioner); err != nil {
+	provisioner, err := c.KarpClient.KarpenterV1alpha5().Provisioners().Get(ctx, stored.Labels[v1alpha5.ProvisionerNameLabelKey], metav1.GetOptions{})
+	all, _ := c.KarpClient.KarpenterV1alpha5().Provisioners().List(ctx, metav1.ListOptions{})
+	_ = all
+	if err != nil {
 		if errors.IsNotFound(err) {
-			return reconcile.Result{}, nil
+			return nil
 		}
-		return reconcile.Result{}, err
+		return err
 	}
 
 	// 3. Execute reconcilers
 	node := stored.DeepCopy()
 	var results []reconcile.Result
 	var errs error
-	for _, reconciler := range []interface {
+	for _, subReconciler := range []interface {
 		Reconcile(context.Context, *v1alpha5.Provisioner, *v1.Node) (reconcile.Result, error)
 	}{
 		c.initialization,
@@ -97,54 +116,60 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		c.emptiness,
 		c.finalizer,
 	} {
-		res, err := reconciler.Reconcile(ctx, provisioner, node)
+		res, err := subReconciler.Reconcile(ctx, provisioner, node)
 		errs = multierr.Append(errs, err)
 		results = append(results, res)
 	}
 
 	// 4. Patch any changes, regardless of errors
 	if !equality.Semantic.DeepEqual(node, stored) {
-		if err := c.kubeClient.Patch(ctx, node, client.MergeFrom(stored)); err != nil {
-			return reconcile.Result{}, fmt.Errorf("patching node, %w", err)
+		patch := client.MergeFrom(stored)
+		data, err := patch.Data(node)
+		if err != nil {
+			return fmt.Errorf("generating patch: %w", err)
+		}
+		if _, err := c.kubeClient.CoreV1().Nodes().Patch(ctx, node.Name, patch.Type(), data, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("patching node, %w", err)
 		}
 	}
 	// 5. Requeue if error or if retryAfter is set
 	if errs != nil {
-		return reconcile.Result{}, errs
+		return errs
 	}
-	return result.Min(results...), nil
+	// (todd) TODO: remove this usage of result
+	minRes := result.Min(results...)
+	if minRes.IsZero() || !minRes.Requeue {
+		return nil
+	}
+	return controller.NewRequeueAfter(minRes.RequeueAfter)
 }
 
-func (c *Controller) Register(ctx context.Context, m manager.Manager) error {
-	return controllerruntime.
-		NewControllerManagedBy(m).
-		Named(controllerName).
-		For(&v1.Node{}).
-		Watches(
-			// Reconcile all nodes related to a provisioner when it changes.
-			&source.Kind{Type: &v1alpha5.Provisioner{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) (requests []reconcile.Request) {
-				nodes := &v1.NodeList{}
-				if err := c.kubeClient.List(ctx, nodes, client.MatchingLabels(map[string]string{v1alpha5.ProvisionerNameLabelKey: o.GetName()})); err != nil {
-					logging.FromContext(ctx).Errorf("Failed to list nodes when mapping expiration watch events, %s", err)
-					return requests
-				}
-				for _, node := range nodes.Items {
-					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: node.Name}})
-				}
-				return requests
-			}),
-		).
-		Watches(
-			// Reconcile node when a pod assigned to it changes.
-			&source.Kind{Type: &v1.Pod{}},
-			handler.EnqueueRequestsFromMapFunc(func(o client.Object) (requests []reconcile.Request) {
-				if name := o.(*v1.Pod).Spec.NodeName; name != "" {
-					requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
-				}
-				return requests
-			}),
-		).
-		WithOptions(controller.Options{MaxConcurrentReconciles: 10}).
-		Complete(c)
+// enqueueNodeForProvisioner is used to reconcile all nodes related to a provisioner when it changes.
+func (c *Reconciler) enqueueNodeForProvisioner(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
+	return func(obj interface{}) {
+		prov := obj.(*v1alpha5.Provisioner)
+		// (todd) TODO: is SelectorFromValidatedSet correct?
+		selector := labels.SelectorFromValidatedSet(labels.Set{v1alpha5.ProvisionerNameLabelKey: prov.GetName()})
+		nodeList, err := c.kubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
+			LabelSelector: selector.String(),
+		})
+		if err != nil {
+			logger.Errorf("Failed to list nodes when mapping expiration watch events, %s", err)
+			return
+		}
+
+		for _, node := range nodeList.Items {
+			enqueueKey(types.NamespacedName{Name: node.Name})
+		}
+	}
+}
+
+// enqueueNodeForPod reconciles the node when a pod assigned to it changes.
+func (c *Reconciler) enqueueNodeForPod(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
+	return func(obj interface{}) {
+		pod := obj.(*v1.Pod)
+		if pod.Spec.NodeName != "" {
+			enqueueKey(types.NamespacedName{Name: pod.Spec.NodeName})
+		}
+	}
 }

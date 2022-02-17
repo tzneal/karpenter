@@ -21,7 +21,6 @@ import (
 	pvcreconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/persistentvolumeclaim"
 	"github.com/aws/karpenter/pkg/utils/functional"
 	"github.com/aws/karpenter/pkg/utils/pod"
-	"go.uber.org/zap"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -63,11 +62,11 @@ func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl 
 
 	pvcinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 	// enqueue PVCs that belong to updated pods
-	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.EnqueuePVCForPod(impl.EnqueueKey, logging.FromContext(ctx))))
+	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(r.EnqueuePVCForPod(impl.EnqueueKey)))
 	return impl
 }
 
-func (c *Reconciler) EnqueuePVCForPod(enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
+func (c *Reconciler) EnqueuePVCForPod(enqueueKey func(key types.NamespacedName)) func(interface{}) {
 	return func(obj interface{}) {
 		for _, pvc := range c.pvcsForPod(obj.(*v1.Pod)) {
 			enqueueKey(pvc)

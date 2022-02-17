@@ -92,11 +92,11 @@ func main() {
 		provisioning.NewController,
 		selection.NewController,
 		persistentvolumeclaim.NewController,
+		node.NewController,
 	)
 
 	if err := manager.RegisterControllers(ctx,
 		termination.NewController(ctx, manager.GetClient(), clientSet.CoreV1(), cloudProvider),
-		node.NewController(manager.GetClient()),
 		metricspod.NewController(manager.GetClient()),
 		metricsnode.NewController(manager.GetClient()),
 		counter.NewController(manager.GetClient()),

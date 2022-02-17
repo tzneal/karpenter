@@ -35,7 +35,7 @@ import (
 type Reconciler struct {
 	KubeClient    kubernetes.Interface
 	CloudProvider cloudprovider.CloudProvider
-	KarpClient    *versioned.Clientset
+	KarpClient    versioned.Interface
 	Provisioners  *Provisioners
 }
 

@@ -23,8 +23,9 @@ import (
 	"github.com/aws/karpenter/pkg/utils/injectabletime"
 	"github.com/aws/karpenter/pkg/utils/node"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/logging"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -34,7 +35,7 @@ const InitializationTimeout = 15 * time.Minute
 // 1. Removes the NotReady taint when the node is ready. This taint is originally applied on node creation.
 // 2. Terminates nodes that don't transition to ready within InitializationTimeout
 type Initialization struct {
-	kubeClient client.Client
+	kubeClient kubernetes.Interface
 }
 
 // Reconcile reconciles the node
@@ -49,12 +50,12 @@ func (r *Initialization) Reconcile(ctx context.Context, _ *v1alpha5.Provisioner,
 			return reconcile.Result{RequeueAfter: InitializationTimeout - age}, nil
 		}
 		logging.FromContext(ctx).Infof("Triggering termination for node that failed to become ready")
-		if err := r.kubeClient.Delete(ctx, n); err != nil {
+		if err := r.kubeClient.CoreV1().Nodes().Delete(ctx, n.Name, metav1.DeleteOptions{}); err != nil {
 			return reconcile.Result{}, fmt.Errorf("deleting node, %w", err)
 		}
 		return reconcile.Result{}, nil
 	}
-	taints := []v1.Taint{}
+	var taints []v1.Taint
 	for _, taint := range n.Spec.Taints {
 		if taint.Key != v1alpha5.NotReadyTaintKey {
 			taints = append(taints, taint)

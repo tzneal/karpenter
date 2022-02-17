@@ -1,4 +1,5 @@
 /*
+/*
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -22,23 +23,23 @@ import (
 
 	"github.com/Pallinder/go-randomdata"
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/client/clientset/versioned"
 	"github.com/aws/karpenter/pkg/controllers/node"
 	"github.com/aws/karpenter/pkg/test"
-	"github.com/aws/karpenter/pkg/utils/injectabletime"
-
 	. "github.com/aws/karpenter/pkg/test/expectations"
+	"github.com/aws/karpenter/pkg/utils/injectabletime"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"knative.dev/pkg/controller"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var ctx context.Context
-var controller *node.Controller
+var reconciler *node.Reconciler
 var env *test.Environment
 
 func TestAPIs(t *testing.T) {
@@ -48,8 +49,10 @@ func TestAPIs(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+
 	env = test.NewEnvironment(ctx, func(e *test.Environment) {
-		controller = node.NewController(e.Client)
+		ctx = e.Ctx
+		reconciler = node.NewReconciler(ctx)
 	})
 	Expect(env.Start()).To(Succeed(), "Failed to start environment")
 })
@@ -58,7 +61,7 @@ var _ = AfterSuite(func() {
 	Expect(env.Stop()).To(Succeed(), "Failed to stop environment")
 })
 
-var _ = Describe("Controller", func() {
+var _ = Describe("Reconciler", func() {
 	var provisioner *v1alpha5.Provisioner
 	BeforeEach(func() {
 		provisioner = &v1alpha5.Provisioner{
@@ -83,7 +86,7 @@ var _ = Describe("Controller", func() {
 				},
 			})
 			ExpectCreated(ctx, env.Client, provisioner, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.DeletionTimestamp.IsZero()).To(BeTrue())
@@ -91,7 +94,7 @@ var _ = Describe("Controller", func() {
 		It("should ignore nodes without a provisioner", func() {
 			n := test.Node(test.NodeOptions{ObjectMeta: metav1.ObjectMeta{Finalizers: []string{v1alpha5.TerminationFinalizer}}})
 			ExpectCreated(ctx, env.Client, provisioner, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.DeletionTimestamp.IsZero()).To(BeTrue())
@@ -106,8 +109,10 @@ var _ = Describe("Controller", func() {
 			}})
 			ExpectCreated(ctx, env.Client, provisioner, n)
 
+			a := env.Client.Get(ctx, client.ObjectKeyFromObject(provisioner), provisioner)
+			_ = a
 			// Should still exist
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.DeletionTimestamp.IsZero()).To(BeTrue())
 
@@ -115,7 +120,12 @@ var _ = Describe("Controller", func() {
 			injectabletime.Now = func() time.Time {
 				return time.Now().Add(time.Duration(*provisioner.Spec.TTLSecondsUntilExpired) * time.Second)
 			}
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+
+			kc, _ := versioned.NewForConfig(env.Config)
+			all, _ := kc.KarpenterV1alpha5().Provisioners().List(ctx, metav1.ListOptions{})
+			_ = all
+
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.DeletionTimestamp.IsZero()).To(BeFalse())
 		})
@@ -133,7 +143,7 @@ var _ = Describe("Controller", func() {
 			})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Spec.Taints).To(Equal(n.Spec.Taints))
@@ -149,7 +159,7 @@ var _ = Describe("Controller", func() {
 			})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Spec.Taints).ToNot(Equal([]v1.Taint{n.Spec.Taints[1]}))
@@ -162,7 +172,7 @@ var _ = Describe("Controller", func() {
 			})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Spec.Taints).To(Equal(n.Spec.Taints))
@@ -177,7 +187,7 @@ var _ = Describe("Controller", func() {
 			})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Spec.Taints).To(Equal(n.Spec.Taints))
@@ -197,7 +207,7 @@ var _ = Describe("Controller", func() {
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
 
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(provisioner))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			// Expect node not be deleted
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
@@ -205,7 +215,7 @@ var _ = Describe("Controller", func() {
 
 			// Simulate time passing and a n failing to join
 			injectabletime.Now = func() time.Time { return time.Now().Add(node.InitializationTimeout) }
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.DeletionTimestamp.IsZero()).To(BeFalse())
@@ -221,7 +231,7 @@ var _ = Describe("Controller", func() {
 
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, node)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectReconcileSucceeded(ctx, reconciler, node)
 
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.Annotations).ToNot(HaveKey(v1alpha5.EmptinessTimestampAnnotationKey))
@@ -235,7 +245,7 @@ var _ = Describe("Controller", func() {
 
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, node)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectReconcileSucceeded(ctx, reconciler, node)
 
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.Annotations).ToNot(HaveKey(v1alpha5.EmptinessTimestampAnnotationKey))
@@ -247,7 +257,7 @@ var _ = Describe("Controller", func() {
 			}})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, node)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectReconcileSucceeded(ctx, reconciler, node)
 
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.Annotations).To(HaveKey(v1alpha5.EmptinessTimestampAnnotationKey))
@@ -266,7 +276,7 @@ var _ = Describe("Controller", func() {
 				NodeName:   node.Name,
 				Conditions: []v1.PodCondition{{Type: v1.PodReady, Status: v1.ConditionTrue}},
 			}))
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectReconcileSucceeded(ctx, reconciler, node)
 
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.Annotations).ToNot(HaveKey(v1alpha5.EmptinessTimestampAnnotationKey))
@@ -281,7 +291,7 @@ var _ = Describe("Controller", func() {
 				}},
 			})
 			ExpectCreated(ctx, env.Client, provisioner, node)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectReconcileSucceeded(ctx, reconciler, node)
 
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.DeletionTimestamp.IsZero()).To(BeFalse())
@@ -303,8 +313,8 @@ var _ = Describe("Controller", func() {
 				}},
 			})
 			ExpectCreated(ctx, env.Client, provisioner, node)
-			result := ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
-			Expect(result).To(Equal(reconcile.Result{Requeue: true, RequeueAfter: expectedRequeueTime}))
+			result := ExpectReconcileSucceeded(ctx, reconciler, node)
+			Expect(result).To(Equal(controller.NewRequeueAfter(expectedRequeueTime)))
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			Expect(node.DeletionTimestamp.IsZero()).To(BeTrue())
 		})
@@ -317,7 +327,7 @@ var _ = Describe("Controller", func() {
 			}})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Finalizers).To(ConsistOf(n.Finalizers[0], v1alpha5.TerminationFinalizer))
@@ -330,7 +340,7 @@ var _ = Describe("Controller", func() {
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
 			Expect(env.Client.Delete(ctx, n)).To(Succeed())
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Finalizers).To(Equal(n.Finalizers))
@@ -342,7 +352,7 @@ var _ = Describe("Controller", func() {
 			}})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Finalizers).To(Equal(n.Finalizers))
@@ -353,7 +363,7 @@ var _ = Describe("Controller", func() {
 			}})
 			ExpectCreated(ctx, env.Client, provisioner)
 			ExpectCreatedWithStatus(ctx, env.Client, n)
-			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(n))
+			ExpectReconcileSucceeded(ctx, reconciler, n)
 
 			n = ExpectNodeExists(ctx, env.Client, n.Name)
 			Expect(n.Finalizers).To(Equal(n.Finalizers))

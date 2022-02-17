@@ -25,15 +25,17 @@ import (
 	"github.com/aws/karpenter/pkg/utils/node"
 	"github.com/aws/karpenter/pkg/utils/pod"
 	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/logging"
 	"knative.dev/pkg/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // Emptiness is a subreconciler that deletes nodes that are empty after a ttl
 type Emptiness struct {
-	kubeClient client.Client
+	kubeClient kubernetes.Interface
 }
 
 // Reconcile reconciles the node
@@ -74,7 +76,7 @@ func (r *Emptiness) Reconcile(ctx context.Context, provisioner *v1alpha5.Provisi
 	}
 	if injectabletime.Now().After(emptinessTime.Add(ttl)) {
 		logging.FromContext(ctx).Infof("Triggering termination after %s for empty node", ttl)
-		if err := r.kubeClient.Delete(ctx, n); err != nil {
+		if err := r.kubeClient.CoreV1().Nodes().Delete(ctx, n.Name, metav1.DeleteOptions{}); err != nil {
 			return reconcile.Result{}, fmt.Errorf("deleting node, %w", err)
 		}
 	}
@@ -83,7 +85,12 @@ func (r *Emptiness) Reconcile(ctx context.Context, provisioner *v1alpha5.Provisi
 
 func (r *Emptiness) isEmpty(ctx context.Context, n *v1.Node) (bool, error) {
 	pods := &v1.PodList{}
-	if err := r.kubeClient.List(ctx, pods, client.MatchingFields{"spec.nodeName": n.Name}); err != nil {
+
+	// (todd): TODO: is the field selector correct?
+	pods, err := r.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.Set{"spec.nodeName": n.Name}.String(),
+	})
+	if err != nil {
 		return false, fmt.Errorf("listing pods for node, %w", err)
 	}
 	for i := range pods.Items {
