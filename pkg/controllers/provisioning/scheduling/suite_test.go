@@ -59,8 +59,8 @@ var _ = BeforeSuite(func() {
 		ctx = e.Ctx
 		kubeClient = kubeclient.Get(ctx)
 		cloudProvider := &fake.CloudProvider{}
-		ctx = provisioning.WithProvisioners(ctx, provisioning.NewProvisioners())
-		ctx = cloudprovider.WithCloudProvider(ctx, cloudProvider)
+		ctx = provisioning.With(ctx, provisioning.NewProvisioners())
+		ctx = cloudprovider.With(ctx, cloudProvider)
 		registry.RegisterOrDie(ctx, cloudProvider)
 		provisioners = provisioning.NewReconciler(ctx)
 		selectionController = selection.NewReconciler(ctx)

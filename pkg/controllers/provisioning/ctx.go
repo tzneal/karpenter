@@ -16,20 +16,21 @@ package provisioning
 
 import (
 	"context"
+	"log"
 )
 
 type provKey struct{}
 
-// WithProvisioners associates a Provisioners with the context
-func WithProvisioners(ctx context.Context, cp *Provisioners) context.Context {
+// With associates a Provisioners with the context
+func With(ctx context.Context, cp *Provisioners) context.Context {
 	return context.WithValue(ctx, provKey{}, cp)
 }
 
-// GetProvisioners gets the Provisioners from the context.
-func GetProvisioners(ctx context.Context) *Provisioners {
+// GetOrDie gets the Provisioners from the context.
+func GetOrDie(ctx context.Context) *Provisioners {
 	value := ctx.Value(provKey{})
 	if value == nil {
-		return nil
+		log.Fatal("Provisioners was not found in context")
 	}
 	return value.(*Provisioners)
 }

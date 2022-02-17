@@ -16,7 +16,6 @@ import (
 func EnqueueNodeForProvisioner(kubeClient kubernetes.Interface, enqueueKey func(key types.NamespacedName), logger *zap.SugaredLogger) func(interface{}) {
 	return func(obj interface{}) {
 		prov := obj.(*v1alpha5.Provisioner)
-		// (todd) TODO: is SelectorFromValidatedSet correct?
 		selector := labels.SelectorFromValidatedSet(labels.Set{v1alpha5.ProvisionerNameLabelKey: prov.GetName()})
 		nodeList, err := kubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{
 			LabelSelector: selector.String(),

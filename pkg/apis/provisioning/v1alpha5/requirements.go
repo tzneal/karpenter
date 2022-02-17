@@ -87,7 +87,7 @@ var (
 type Requirements struct {
 	// Requirements are layered with Labels and applied to every node.
 	Requirements []v1.NodeSelectorRequirement `json:"requirements,omitempty"`
-	requirements map[string]sets.Set          `json:"-"`
+	requirements map[string]sets.Set
 }
 
 // NewRequirements constructs requiremnets from NodeSelectorRequirements

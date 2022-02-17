@@ -17,13 +17,22 @@ package apiobject
 import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func PodNamespacedNames(pods []*v1.Pod) []types.NamespacedName {
-	namespacedNames := []types.NamespacedName{}
+	var namespacedNames []types.NamespacedName
 	for _, pod := range pods {
-		namespacedNames = append(namespacedNames, client.ObjectKeyFromObject(pod))
+		namespacedNames = append(namespacedNames, NamespacedNameFromObject(pod))
 	}
 	return namespacedNames
+}
+
+type Object interface {
+	GetNamespace() string
+	GetName() string
+}
+
+// NamespacedNameFromObject returns the types.NamespacedName given a object.
+func NamespacedNameFromObject(obj Object) types.NamespacedName {
+	return types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}
 }

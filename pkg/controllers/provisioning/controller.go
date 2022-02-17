@@ -45,7 +45,7 @@ func NewReconciler(ctx context.Context) *Reconciler {
 	return &Reconciler{
 		KarpClient:    provisioningclient.Get(ctx),
 		KubeClient:    kubeClient,
-		Provisioners:  GetProvisioners(ctx),
-		CloudProvider: cloudprovider.GetCloudProvider(ctx),
+		Provisioners:  GetOrDie(ctx),
+		CloudProvider: cloudprovider.GetOrDie(ctx),
 	}
 }

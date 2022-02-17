@@ -103,7 +103,6 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, pvc *v1.PersistentVolume
 }
 
 func (c *Reconciler) podForPvc(ctx context.Context, pvc *v1.PersistentVolumeClaim) (*v1.Pod, error) {
-	// (todd): TODO: podlister vs using the client itself?
 	pods, err := c.PodLister.Pods(pvc.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil, err

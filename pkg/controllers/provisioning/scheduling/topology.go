@@ -144,7 +144,6 @@ func (t *Topology) countMatchingPods(ctx context.Context, topologyGroup *Topolog
 func TopologyListOptions(constraint *v1.TopologySpreadConstraint) metav1.ListOptions {
 	selector := labels.Everything()
 	if constraint.LabelSelector == nil {
-		// (todd): check if this selector.String() is correct
 		return metav1.ListOptions{LabelSelector: selector.String()}
 	}
 	selector.String()
@@ -156,7 +155,6 @@ func TopologyListOptions(constraint *v1.TopologySpreadConstraint) metav1.ListOpt
 		requirement, _ := labels.NewRequirement(expression.Key, selection.Operator(expression.Operator), expression.Values)
 		selector = selector.Add(*requirement)
 	}
-	// (todd): check if this selector.String() is correct
 	return metav1.ListOptions{LabelSelector: selector.String()}
 }
 

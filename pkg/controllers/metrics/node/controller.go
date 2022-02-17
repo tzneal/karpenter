@@ -22,6 +22,7 @@ import (
 	provisionerinformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
 	kc "github.com/aws/karpenter/pkg/controllers"
 	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
+	"github.com/aws/karpenter/pkg/utils/apiobject"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
@@ -39,7 +40,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -164,7 +164,7 @@ func NewReconciler(ctx context.Context) *Reconciler {
 }
 
 func (c *Reconciler) FinalizeKind(ctx context.Context, node *v1.Node) reconciler.Event {
-	c.cleanup(client.ObjectKeyFromObject(node))
+	c.cleanup(apiobject.NamespacedNameFromObject(node))
 	return nil
 }
 
@@ -173,7 +173,7 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, node *v1.Node) reconcile
 	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("nodemetrics").With("node", req.Name))
 
 	// Remove the previous gauge after node labels are updated
-	c.cleanup(client.ObjectKeyFromObject(node))
+	c.cleanup(apiobject.NamespacedNameFromObject(node))
 
 	if err := c.record(ctx, node); err != nil {
 		logging.FromContext(ctx).Errorf("Failed to update gauges: %s", err)
@@ -251,7 +251,7 @@ func (c *Reconciler) record(ctx context.Context, node *v1.Node) error {
 		allocatableGaugeVec:    allocatable,
 	} {
 		if err := c.set(resourceList, node, gaugeVec); err != nil {
-			logging.FromContext(ctx).Errorf("Failed to generate gauge: %w", err)
+			logging.FromContext(ctx).Errorf("Failed to generate gauge: %s", err)
 		}
 	}
 	return nil

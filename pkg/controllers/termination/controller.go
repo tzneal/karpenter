@@ -61,7 +61,7 @@ func NewReconciler(ctx context.Context) *Reconciler {
 		Terminator: &Terminator{
 			KubeClient:    kubeClient,
 			CoreV1Client:  kubeClient.CoreV1(),
-			CloudProvider: cloudprovider.GetCloudProvider(ctx),
+			CloudProvider: cloudprovider.GetOrDie(ctx),
 			EvictionQueue: NewEvictionQueue(ctx, kubeClient.CoreV1()),
 		},
 	}

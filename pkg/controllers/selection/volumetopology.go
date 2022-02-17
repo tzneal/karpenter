@@ -107,9 +107,6 @@ func (v *VolumeTopology) getStorageClassRequirements(ctx context.Context, pvc *v
 func (v *VolumeTopology) getPersistentVolumeRequirements(ctx context.Context, pod *v1.Pod, pvc *v1.PersistentVolumeClaim) ([]v1.NodeSelectorRequirement, error) {
 	pv, err := v.kubeClient.CoreV1().PersistentVolumes().Get(ctx, pvc.Spec.VolumeName, metav1.GetOptions{})
 
-	// (todd) TODO: check on persistent volume, old code passed in a namespace?
-	/*pv := &v1.PersistentVolume{}
-	if err := v.kubeClient.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName, Namespace: pod.Namespace}, pv); err != nil {*/
 	if err != nil {
 		return nil, fmt.Errorf("getting persistent volume %q, %w", pvc.Spec.VolumeName, err)
 	}

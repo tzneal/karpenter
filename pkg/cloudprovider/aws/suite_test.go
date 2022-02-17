@@ -109,8 +109,8 @@ var _ = BeforeSuite(func() {
 			},
 		}
 		registry.RegisterOrDie(ctx, cloudProvider)
-		ctx = provisioning.WithProvisioners(ctx, provisioning.NewProvisioners())
-		ctx = cloudprovider.WithCloudProvider(ctx, cloudProvider)
+		ctx = provisioning.With(ctx, provisioning.NewProvisioners())
+		ctx = cloudprovider.With(ctx, cloudProvider)
 		provisioners = provisioning.NewReconciler(ctx)
 		selectionController = selection.NewReconciler(ctx)
 	})

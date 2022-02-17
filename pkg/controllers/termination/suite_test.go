@@ -57,7 +57,7 @@ var _ = BeforeSuite(func() {
 		ctx = e.Ctx
 		cloudProvider := &fake.CloudProvider{}
 		registry.RegisterOrDie(ctx, cloudProvider)
-		ctx = cloudprovider.WithCloudProvider(ctx, cloudProvider)
+		ctx = cloudprovider.With(ctx, cloudProvider)
 		controller = termination.NewReconciler(ctx)
 		evictionQueue = controller.Terminator.EvictionQueue
 	})

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aws/karpenter/pkg/utils/apiobject"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
@@ -32,7 +33,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
@@ -113,7 +113,7 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.
 	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("podmetrics").With("pod", req.Name))
 
 	// Remove the previous gauge after pod labels are updated
-	if labels, ok := c.LabelsMap[client.ObjectKeyFromObject(pod)]; ok {
+	if labels, ok := c.LabelsMap[apiobject.NamespacedNameFromObject(pod)]; ok {
 		podGaugeVec.Delete(labels)
 	}
 
@@ -123,7 +123,7 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.
 }
 
 func (c *Reconciler) FinalizeKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
-	if labels, ok := c.LabelsMap[client.ObjectKeyFromObject(pod)]; ok {
+	if labels, ok := c.LabelsMap[apiobject.NamespacedNameFromObject(pod)]; ok {
 		podGaugeVec.Delete(labels)
 	}
 	return nil
@@ -132,7 +132,7 @@ func (c *Reconciler) FinalizeKind(ctx context.Context, pod *v1.Pod) reconciler.E
 func (c *Reconciler) record(ctx context.Context, pod *v1.Pod) {
 	labels := c.labels(ctx, pod)
 	podGaugeVec.With(labels).Set(float64(1))
-	c.LabelsMap[client.ObjectKeyFromObject(pod)] = labels
+	c.LabelsMap[apiobject.NamespacedNameFromObject(pod)] = labels
 }
 
 // labels creates the labels using the current state of the pod

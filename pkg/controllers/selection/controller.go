@@ -57,7 +57,7 @@ func NewReconciler(ctx context.Context) *Reconciler {
 	kubeClient := kubeclient.Get(ctx)
 	return &Reconciler{
 		KubeClient:     kubeClient,
-		Provisioners:   provisioning.GetProvisioners(ctx),
+		Provisioners:   provisioning.GetOrDie(ctx),
 		Preferences:    NewPreferences(),
 		VolumeTopology: NewVolumeTopology(kubeClient),
 	}

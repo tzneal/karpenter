@@ -78,19 +78,13 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, provisioner *v1alpha5.Pr
 	if err != nil {
 		return fmt.Errorf("computing resource usage, %w", err)
 	}
-	// (todd) TODO: should just be able to directly update status here without the patch
+
+	// status can be directly updated and knative will update it on the server
 	provisioner.Status.Resources = resourceCounts
-	// persisted := provisioner.DeepCopy()
-	//
-	/*c.karpClient.KarpenterV1alpha5().Provisioners().UpdateStatus(ctx, provisioner)
-	if err := c.kubeClient.Status().Patch(ctx, provisioner, client.MergeFrom(persisted)); err != nil {
-		return fmt.Errorf("patching provisioner, %w", err)
-	}*/
 	return nil
 }
 
 func (c *Reconciler) resourceCountsFor(ctx context.Context, provisionerName string) (v1.ResourceList, error) {
-	// (todd) TODO: label selector correct?
 	nodes, err := c.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{v1alpha5.ProvisionerNameLabelKey: provisionerName}).String(),
 	})

@@ -55,7 +55,6 @@ func (t *Terminator) cordon(ctx context.Context, node *v1.Node) error {
 	persisted := node.DeepCopy()
 	node.Spec.Unschedulable = true
 
-	// TODO (todd): does this patch work?
 	patch := client.MergeFrom(persisted)
 	data, err := patch.Data(node)
 	if err != nil {
@@ -99,7 +98,6 @@ func (t *Terminator) terminate(ctx context.Context, node *v1.Node) error {
 	persisted := node.DeepCopy()
 	node.Finalizers = functional.StringSliceWithout(node.Finalizers, v1alpha5.TerminationFinalizer)
 
-	// TODO (todd): does this patch work?
 	patch := client.MergeFrom(persisted)
 	data, err := patch.Data(node)
 	if err != nil {

@@ -16,20 +16,21 @@ package cloudprovider
 
 import (
 	"context"
+	"log"
 )
 
 type cpKey struct{}
 
-// WithCloudProvider associates a CloudProvider with the context
-func WithCloudProvider(ctx context.Context, cp CloudProvider) context.Context {
+// With associates a CloudProvider with the context
+func With(ctx context.Context, cp CloudProvider) context.Context {
 	return context.WithValue(ctx, cpKey{}, cp)
 }
 
 // GetConfig gets the CloudProvider from the context.
-func GetCloudProvider(ctx context.Context) CloudProvider {
+func GetOrDie(ctx context.Context) CloudProvider {
 	value := ctx.Value(cpKey{})
 	if value == nil {
-		return nil
+		log.Fatal("CloudProvider was not found in context")
 	}
 	return value.(CloudProvider)
 }

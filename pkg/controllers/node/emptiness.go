@@ -86,7 +86,6 @@ func (r *Emptiness) Reconcile(ctx context.Context, provisioner *v1alpha5.Provisi
 func (r *Emptiness) isEmpty(ctx context.Context, n *v1.Node) (bool, error) {
 	pods := &v1.PodList{}
 
-	// (todd): TODO: is the field selector correct?
 	pods, err := r.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(ctx, metav1.ListOptions{
 		FieldSelector: fields.Set{"spec.nodeName": n.Name}.String(),
 	})
