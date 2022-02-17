@@ -24,7 +24,9 @@ import (
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/controllers/provisioning"
 	"github.com/aws/karpenter/pkg/controllers/selection"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	podinformer "knative.dev/pkg/client/injection/kube/informers/core/v1/pod"
+	"knative.dev/pkg/controller"
 
 	//nolint:revive,stylecheck
 	. "github.com/onsi/gomega"
@@ -174,7 +176,7 @@ func ExpectProvisioningCleanedUp(ctx context.Context, c client.Client, reconcile
 	Expect(c.List(ctx, &provisioners)).To(Succeed())
 	ExpectCleanedUp(ctx, c)
 	for i := range provisioners.Items {
-		ExpectFinalizeSucceeded(ctx, reconciler, &provisioners.Items[i])
+		ExpectReconcileSucceeded(ctx, c, reconciler, &provisioners.Items[i])
 	}
 }
 
@@ -188,7 +190,7 @@ func ExpectProvisioned(ctx context.Context, c client.Client, selectionController
 	}
 
 	// Wait for reconcile
-	ExpectReconcileSucceeded(ctx, provisioningController, provisioner)
+	ExpectReconcileSucceeded(ctx, c, provisioningController, provisioner)
 	wg := sync.WaitGroup{}
 	for _, pod := range pods {
 		wg.Add(1)
@@ -207,47 +209,50 @@ func ExpectProvisioned(ctx context.Context, c client.Client, selectionController
 	return result
 }
 
-func ExpectReconcileSucceeded(ctx context.Context, reconciler interface{}, object interface{}) error {
-	if _, ok := object.(client.ObjectKey); ok {
-		Expect(ok).ShouldNot(BeTrue(), fmt.Sprintf("expected object to not be of type %T", object))
+// ExpectReconcileSucceeded tests that reconcile succeeds. It is meant to mimic the generated knative reconcile
+// implementation which calls ReconcileKind or FinalizeKind depending on the object's deletion timestamp.
+func ExpectReconcileSucceeded(ctx context.Context, c client.Client, reconciler interface{}, obj client.Object) error {
+	// fetch the latest object (knative reconciler gets a key that it then looks up, so we emulate that)
+	aerr := c.Get(ctx, client.ObjectKeyFromObject(obj), obj)
+
+	if errors.IsNotFound(aerr) {
+		// user specified an object, but it no longer exists. We do the best we can by making this look
+		// like a deletion so the appropriate method will be called
+		if obj.GetDeletionTimestamp().IsZero() {
+			n := metav1.Now()
+			obj.SetDeletionTimestamp(&n)
+		}
+	} else {
+		Expect(aerr).Should(Succeed())
+	}
+
+	var method reflect.Value
+	objectDescription := ""
+	wantedMethod := ""
+	if obj.GetDeletionTimestamp().IsZero() {
+		objectDescription = "live"
+		wantedMethod = "ReconcileKind"
+	} else {
+		objectDescription = "deleted"
+		wantedMethod = "FinalizeKind"
 	}
 
 	rv := reflect.ValueOf(reconciler)
-	rk := rv.MethodByName("ReconcileKind")
-	Expect(rk).ShouldNot(BeNil())
-	result := rk.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(object)})
+	method = rv.MethodByName(wantedMethod)
+	Expect(method).ToNot(Equal(reflect.Value{}),
+		fmt.Sprintf("reconciled a %s object, but %T has no %s method", objectDescription, reconciler, wantedMethod))
+
+	result := method.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(obj)})
 	Expect(len(result)).Should(BeNumerically("==", 1))
 	err := result[0].Interface()
 	if err == nil {
 		return nil
 	}
-	// (TODD) TODO: handle this
-	// Expect(controller.IsRequeueKey(err)).Should()
-	// result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-	// Expect(err).ToNot(HaveOccurred())
-	// return result
-	return err.(error)
-}
 
-func ExpectFinalizeSucceeded(ctx context.Context, reconciler interface{}, object interface{}) error {
-	if _, ok := object.(client.ObjectKey); ok {
-		Expect(ok).ShouldNot(BeTrue(), fmt.Sprintf("expected object to not be of type %T", object))
-	}
+	// allow skips/requeues, but not errors
+	Expect(err).To(
+		Or(WithTransform(controller.IsSkipKey, Equal(true)),
+			WithTransform(func(err error) bool { ok, _ := controller.IsRequeueKey(err); return ok }, Equal(true))))
 
-	rv := reflect.ValueOf(reconciler)
-	rk := rv.MethodByName("FinalizeKind")
-	Expect(rk).ShouldNot(BeNil())
-	result := rk.Call([]reflect.Value{reflect.ValueOf(ctx), reflect.ValueOf(object)})
-	Expect(len(result)).Should(BeNumerically("==", 1))
-
-	err := result[0].Interface()
-	if err == nil {
-		return nil
-	}
-	// (TODD) TODO: handle this
-	// Expect(controller.IsRequeueKey(err)).Should()
-	// result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: key})
-	// Expect(err).ToNot(HaveOccurred())
-	// return result
 	return err.(error)
 }

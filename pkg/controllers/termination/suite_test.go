@@ -85,7 +85,7 @@ var _ = Describe("Termination", func() {
 			ExpectCreated(ctx, env.Client, node)
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should not evict pods that tolerate unschedulable taint", func() {
@@ -99,7 +99,7 @@ var _ = Describe("Termination", func() {
 			// Trigger Termination Reconciler
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect node to exist and be draining
 			ExpectNodeDraining(env.Client, node.Name)
@@ -110,7 +110,7 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			ExpectNotFound(ctx, env.Client, node)
 		})
@@ -125,7 +125,7 @@ var _ = Describe("Termination", func() {
 
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect no pod to be enqueued for eviction
 			ExpectNotEnqueuedForEviction(evictionQueue, podEvict, podNoEvict)
@@ -138,7 +138,7 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile node to evict pod
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect podEvict to be enqueued for eviction then be evicted
 			ExpectEvicted(env.Client, podEvict)
@@ -148,7 +148,7 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should delete nodes that have do-not-evict on pods for which it does not apply", func() {
@@ -176,11 +176,11 @@ var _ = Describe("Termination", func() {
 			for _, pod := range pods {
 				Expect(env.Client.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: ptr.Int64(30)})).To(Succeed())
 			}
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
 			// Simulate stuck terminating
 			injectabletime.Now = func() time.Time { return time.Now().Add(1 * time.Minute) }
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should fail to evict pods that violate a PDB", func() {
@@ -203,7 +203,7 @@ var _ = Describe("Termination", func() {
 			// Trigger Termination Reconciler
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect the pod to be enqueued for eviction
 			ExpectEnqueuedForEviction(evictionQueue, podNoEvict)
@@ -222,7 +222,7 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should evict non-critical pods first", func() {
@@ -235,7 +235,7 @@ var _ = Describe("Termination", func() {
 			// Trigger Termination Reconciler
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect podEvict to be enqueued for eviction
 			ExpectEvicted(env.Client, podEvict)
@@ -249,7 +249,7 @@ var _ = Describe("Termination", func() {
 
 			// Expect the critical pods to be evicted and deleted
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectEvicted(env.Client, podNodeCritical)
 			ExpectDeleted(ctx, env.Client, podNodeCritical)
 			ExpectEvicted(env.Client, podClusterCritical)
@@ -257,7 +257,7 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 
@@ -280,7 +280,7 @@ var _ = Describe("Termination", func() {
 
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect mirror pod to not be queued for eviction
 			ExpectNotEnqueuedForEviction(evictionQueue, podNoEvict)
@@ -293,14 +293,14 @@ var _ = Describe("Termination", func() {
 
 			// Reconcile node to evict pod
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Delete pod to simulate successful eviction
 			ExpectDeleted(ctx, env.Client, podEvict)
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 
 		})
@@ -311,28 +311,28 @@ var _ = Describe("Termination", func() {
 			// Trigger Termination Reconciler
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 
 			// Expect the pod to be enqueued for eviction
 			ExpectEvicted(env.Client, pods[0], pods[1])
 
 			// Expect node to exist and be draining, but not deleted
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNodeDraining(env.Client, node.Name)
 
 			ExpectDeleted(ctx, env.Client, pods[1])
 
 			// Expect node to exist and be draining, but not deleted
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNodeDraining(env.Client, node.Name)
 
 			ExpectDeleted(ctx, env.Client, pods[0])
 
 			// Reconcile to delete node
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 		It("should wait for pods to terminate", func() {
@@ -342,13 +342,13 @@ var _ = Describe("Termination", func() {
 			// Before grace period, node should not delete
 			Expect(env.Client.Delete(ctx, node)).To(Succeed())
 			node = ExpectNodeExists(ctx, env.Client, node.Name)
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNodeExists(ctx, env.Client, node.Name)
 			ExpectEvicted(env.Client, pod)
 
 			// After grace period, node should delete
 			injectabletime.Now = func() time.Time { return time.Now().Add(30 * time.Second) }
-			ExpectFinalizeSucceeded(ctx, controller, node)
+			ExpectReconcileSucceeded(ctx, env.Client, controller, node)
 			ExpectNotFound(ctx, env.Client, node)
 		})
 	})
