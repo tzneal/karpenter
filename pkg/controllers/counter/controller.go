@@ -79,6 +79,7 @@ func (c *Reconciler) ReconcileKind(ctx context.Context, provisioner *v1alpha5.Pr
 		return fmt.Errorf("computing resource usage, %w", err)
 	}
 
+	provisioner.Status.MarkReady()
 	// status can be directly updated and knative will update it on the server
 	provisioner.Status.Resources = resourceCounts
 	return nil

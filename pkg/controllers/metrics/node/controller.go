@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	provisionerinformer "github.com/aws/karpenter/pkg/client/injection/informers/provisioning/v1alpha5/provisioner"
-	kc "github.com/aws/karpenter/pkg/controllers"
+	"github.com/aws/karpenter/pkg/controllers"
 	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
 	"github.com/aws/karpenter/pkg/utils/apiobject"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -144,14 +144,14 @@ type Reconciler struct {
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	r := NewReconciler(ctx)
-	impl := nodereconciler.NewImpl(ctx, r)
+	impl := nodereconciler.NewImpl(ctx, r, controllers.FinalizerNamed("metricsnode"))
 	impl.Name = "nodemetrics"
 
 	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 	provisionerinformer.Get(ctx).Informer().
-		AddEventHandler(controller.HandleAll(kc.EnqueueNodeForProvisioner(r.kubeClient, impl.EnqueueKey, logging.FromContext(ctx))))
+		AddEventHandler(controller.HandleAll(controllers.EnqueueNodeForProvisioner(r.kubeClient, impl.EnqueueKey, logging.FromContext(ctx))))
 	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(
-		kc.EnqueueNodeForPod(impl.EnqueueKey)))
+		controllers.EnqueueNodeForPod(impl.EnqueueKey)))
 	return impl
 }
 

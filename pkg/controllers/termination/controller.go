@@ -20,6 +20,7 @@ import (
 
 	provisioning "github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/cloudprovider"
+	"github.com/aws/karpenter/pkg/controllers"
 	nodereconciler "github.com/aws/karpenter/pkg/k8sgen/reconciler/core/v1/node"
 	"github.com/aws/karpenter/pkg/utils/functional"
 	v1 "k8s.io/api/core/v1"
@@ -45,7 +46,7 @@ type Reconciler struct {
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	r := NewReconciler(ctx)
-	impl := nodereconciler.NewImpl(ctx, r)
+	impl := nodereconciler.NewImpl(ctx, r, controllers.FinalizerNamed("termination"))
 	impl.Name = controllerName
 	nodeinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
 

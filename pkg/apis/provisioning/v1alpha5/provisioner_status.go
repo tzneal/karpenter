@@ -42,6 +42,10 @@ func (p *ProvisionerStatus) InitializeConditions() {
 	condSet.Manage(p).InitializeConditions()
 }
 
+func (p *ProvisionerStatus) MarkReady() {
+	condSet.Manage(p).MarkTrue(Active)
+}
+
 func (p *Provisioner) StatusConditions() apis.ConditionManager {
 	return apis.NewLivingConditionSet(
 		Active,

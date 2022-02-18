@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aws/karpenter/pkg/controllers"
 	"github.com/aws/karpenter/pkg/utils/apiobject"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -27,6 +28,7 @@ import (
 	podreconciler "knative.dev/pkg/client/injection/kube/reconciler/core/v1/pod"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
+	"knative.dev/pkg/logging"
 	"knative.dev/pkg/reconciler"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
@@ -92,7 +94,7 @@ var _ podreconciler.Finalizer = (*Reconciler)(nil)
 // NewController constructs a controller instance
 func NewController(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 	r := NewReconciler(ctx)
-	impl := podreconciler.NewImpl(ctx, r)
+	impl := podreconciler.NewImpl(ctx, r, controllers.FinalizerNamed("metricspod"))
 	impl.Name = "podmetrics"
 
 	podinformer.Get(ctx).Informer().AddEventHandler(controller.HandleAll(impl.Enqueue))
@@ -109,8 +111,7 @@ func NewReconciler(ctx context.Context) *Reconciler {
 
 // ReconcileKind executes a termination control loop for the resource
 func (c *Reconciler) ReconcileKind(ctx context.Context, pod *v1.Pod) reconciler.Event {
-
-	// ctx = logging.WithLogger(ctx, logging.FromContext(ctx).Named("podmetrics").With("pod", req.Name))
+	ctx = logging.WithLogger(ctx, logging.FromContext(ctx).With("pod", pod.Name))
 
 	// Remove the previous gauge after pod labels are updated
 	if labels, ok := c.LabelsMap[apiobject.NamespacedNameFromObject(pod)]; ok {
