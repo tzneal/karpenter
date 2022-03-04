@@ -61,3 +61,50 @@ func HasAnyPrefix(s string, prefixes ...string) bool {
 	}
 	return false
 }
+
+func Intersect(lhs, rhs []string) []string {
+	seen := map[string]struct{}{}
+	for _, l := range lhs {
+		seen[l] = struct{}{}
+	}
+
+	var intersected []string
+	for _, r := range rhs {
+		if _, ok := seen[r]; ok {
+			intersected = append(intersected, r)
+		}
+	}
+	return intersected
+}
+
+func Subtract(lhs, rhs []string) []string {
+	seen := map[string]struct{}{}
+	for _, l := range lhs {
+		seen[l] = struct{}{}
+	}
+	for _, v := range rhs {
+		delete(seen, v)
+	}
+	var subtracted []string
+	for k := range seen {
+		subtracted = append(subtracted, k)
+	}
+
+	return subtracted
+}
+
+func Union(lhs, rhs []string) []string {
+	seen := map[string]struct{}{}
+	var unioned []string
+	for _, l := range lhs {
+		seen[l] = struct{}{}
+		unioned = append(unioned, l)
+	}
+
+	for _, r := range rhs {
+		if _, ok := seen[r]; !ok {
+			unioned = append(unioned, r)
+		}
+	}
+	return unioned
+}

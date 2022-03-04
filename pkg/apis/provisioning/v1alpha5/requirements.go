@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/aws/karpenter/pkg/utils/functional"
+
 	"go.uber.org/multierr"
 	v1 "k8s.io/api/core/v1"
 	stringsets "k8s.io/apimachinery/pkg/util/sets"
@@ -88,12 +90,11 @@ var (
 type Requirements struct {
 	// Requirements are layered with Labels and applied to every node.
 	Requirements []v1.NodeSelectorRequirement `json:"requirements,omitempty"`
-	requirements map[string]sets.Set          `json:"-"`
 }
 
 // NewRequirements constructs requirements from NodeSelectorRequirements
 func NewRequirements(requirements ...v1.NodeSelectorRequirement) Requirements {
-	return Requirements{requirements: map[string]sets.Set{}}.Add(requirements...)
+	return Requirements{}.Add(requirements...)
 }
 
 // NewLabelRequirements constructs requirements from labels
@@ -142,10 +143,8 @@ func (r Requirements) WellKnown() Requirements {
 func (r Requirements) Add(requirements ...v1.NodeSelectorRequirement) Requirements {
 	// Deep copy to avoid mutating existing requirements
 	r = *r.DeepCopy()
-	// This fail-safe measurement can be removed later when we implement test webhook.
-	if r.requirements == nil {
-		r.requirements = map[string]sets.Set{}
-	}
+
+	existing := map[string]int{}
 	for _, requirement := range requirements {
 		if normalized, ok := NormalizedLabels[requirement.Key]; ok {
 			requirement.Key = normalized
@@ -153,15 +152,45 @@ func (r Requirements) Add(requirements ...v1.NodeSelectorRequirement) Requiremen
 		if IgnoredLabels.Has(requirement.Key) {
 			continue
 		}
-		r.Requirements = append(r.Requirements, requirement)
-		switch requirement.Operator {
-		case v1.NodeSelectorOpIn:
-			r.requirements[requirement.Key] = r.Get(requirement.Key).Intersection(sets.NewSet(requirement.Values...))
-		case v1.NodeSelectorOpNotIn:
-			r.requirements[requirement.Key] = r.Get(requirement.Key).Intersection(sets.NewComplementSet(requirement.Values...))
+		if idx, ok := existing[requirement.Key]; ok {
+			r.Requirements[idx] = MergeRequirement(r.Requirements[idx], requirement)
+			continue
 		}
+		existing[requirement.Key] = len(r.Requirements)
+		r.Requirements = append(r.Requirements, requirement)
 	}
 	return r
+}
+
+func MergeRequirement(lhs v1.NodeSelectorRequirement, rhs v1.NodeSelectorRequirement) v1.NodeSelectorRequirement {
+	if rhs.Operator == v1.NodeSelectorOpExists {
+		// TODO(todd): not certain about this, but it's only exercised in an explicit test of this op
+		return lhs
+	} else if rhs.Operator == v1.NodeSelectorOpDoesNotExist {
+		// generate an invalid match
+		lhs.Operator = v1.NodeSelectorOpIn
+		lhs.Values = nil
+	} else if lhs.Operator != rhs.Operator {
+		if lhs.Operator == v1.NodeSelectorOpIn && rhs.Operator == v1.NodeSelectorOpNotIn {
+			lhs.Values = functional.Subtract(lhs.Values, rhs.Values)
+		} else if lhs.Operator == v1.NodeSelectorOpNotIn && rhs.Operator == v1.NodeSelectorOpIn {
+			lhs.Operator = v1.NodeSelectorOpIn
+			lhs.Values = functional.Subtract(rhs.Values, lhs.Values)
+		} else {
+			// TODO(todd): need to think about this, but generate an invalid match for now
+			lhs.Operator = v1.NodeSelectorOpIn
+			lhs.Values = nil
+		}
+	} else if lhs.Operator == v1.NodeSelectorOpIn {
+		lhs.Values = functional.Intersect(lhs.Values, rhs.Values)
+	} else if lhs.Operator == v1.NodeSelectorOpNotIn {
+		lhs.Values = functional.Union(lhs.Values, rhs.Values)
+	} else {
+		// TODO(todd): need to think about this
+		lhs.Operator = v1.NodeSelectorOpIn
+		lhs.Values = nil
+	}
+	return lhs
 }
 
 // Keys returns unique set of the label keys from the requirements
@@ -176,10 +205,15 @@ func (r Requirements) Keys() stringsets.String {
 // Get returns the sets of values allowed by all included requirements
 // following a denylist method. Values are allowed except specified
 func (r Requirements) Get(key string) sets.Set {
-	if _, ok := r.requirements[key]; !ok {
-		return sets.NewComplementSet()
+	for _, req := range r.Requirements {
+		if req.Key == key {
+			if req.Operator == v1.NodeSelectorOpIn {
+				return sets.NewSet(req.Values...)
+			}
+			return sets.NewComplementSet(req.Values...)
+		}
 	}
-	return r.requirements[key]
+	return sets.NewComplementSet()
 }
 
 func (r Requirements) Zones() stringsets.String {

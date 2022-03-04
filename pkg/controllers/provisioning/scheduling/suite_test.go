@@ -170,13 +170,14 @@ var _ = Describe("Constraints", func() {
 		})
 	})
 	Context("Well Known Labels", func() {
-		It("should use provisioner constraints", func() {
+		It("should use provisioner requirements", func() {
 			provisioner.Spec.Requirements = v1alpha5.NewRequirements(
 				v1.NodeSelectorRequirement{Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-2"}})
 			pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod())[0]
 			node := ExpectScheduled(ctx, env.Client, pod)
 			Expect(node.Labels).To(HaveKeyWithValue(v1.LabelTopologyZone, "test-zone-2"))
 		})
+		// TODO(todd): not setting label
 		It("should use node selectors", func() {
 			provisioner.Spec.Requirements = v1alpha5.NewRequirements(
 				v1.NodeSelectorRequirement{Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1", "test-zone-2"}})
@@ -194,7 +195,7 @@ var _ = Describe("Constraints", func() {
 			))[0]
 			ExpectNotScheduled(ctx, env.Client, pod)
 		})
-		It("should not schedule if node selector outside of provisioner constraints", func() {
+		It("should not schedule if node selector outside of provisioner requirements", func() {
 			provisioner.Spec.Requirements = v1alpha5.NewRequirements(
 				v1.NodeSelectorRequirement{Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1"}})
 			pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(
@@ -485,7 +486,7 @@ var _ = Describe("Topology", func() {
 			)
 			ExpectSkew(ctx, env.Client, "default", &topology[0]).To(ConsistOf(1, 1, 2))
 		})
-		It("should respect provisioner zonal constraints", func() {
+		It("should respect provisioner zonal requirements", func() {
 			provisioner.Spec.Requirements = v1alpha5.NewRequirements(
 				v1.NodeSelectorRequirement{Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1", "test-zone-2"}})
 			topology := []v1.TopologySpreadConstraint{{
@@ -576,10 +577,44 @@ var _ = Describe("Topology", func() {
 			)
 			ExpectSkew(ctx, env.Client, "default", &topology[0]).To(ConsistOf(4))
 		})
+		It("balance multiple deployments with hostname topology spread", func() {
+			// Issue #1425
+			spreadPod := func(appName string) test.PodOptions {
+				return test.PodOptions{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							"app": appName,
+						},
+					},
+					TopologySpreadConstraints: []v1.TopologySpreadConstraint{
+						{
+							MaxSkew:           1,
+							TopologyKey:       v1.LabelHostname,
+							WhenUnsatisfiable: v1.DoNotSchedule,
+							LabelSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": appName},
+							},
+						},
+					},
+				}
+			}
+
+			scheduled := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
+				test.UnschedulablePod(spreadPod("app1")), test.UnschedulablePod(spreadPod("app1")),
+				test.UnschedulablePod(spreadPod("app2")), test.UnschedulablePod(spreadPod("app2")))
+
+			for _, p := range scheduled {
+				ExpectScheduled(ctx, env.Client, p)
+			}
+			nodes := v1.NodeList{}
+			Expect(env.Client.List(ctx, &nodes)).To(Succeed())
+			// this wasn't part of #1425, but ensures that we launch the minimum number of nodes
+			Expect(nodes.Items).To(HaveLen(2))
+		})
 	})
 
 	Context("Combined Hostname and Zonal Topology", func() {
-		It("should spread pods while respecting both constraints", func() {
+		It("should spread pods while respecting both requirements", func() {
 			topology := []v1.TopologySpreadConstraint{{
 				TopologyKey:       v1.LabelTopologyZone,
 				WhenUnsatisfiable: v1.DoNotSchedule,
@@ -686,7 +721,7 @@ var _ = Describe("Taints", func() {
 		node := ExpectScheduled(ctx, env.Client, pod)
 		Expect(node.Spec.Taints).To(ContainElement(provisioner.Spec.Taints[0]))
 	})
-	It("should schedule pods that tolerate provisioner constraints", func() {
+	It("should schedule pods that tolerate provisioner requirements", func() {
 		provisioner.Spec.Taints = []v1.Taint{{Key: "test-key", Value: "test-value", Effect: v1.TaintEffectNoSchedule}}
 		for _, pod := range ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
 			// Tolerates with OpExists

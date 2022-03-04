@@ -82,4 +82,12 @@ var _ = Describe("Functional", func() {
 			Expect(UnionStringMaps(original, disjoiner, empty, uberwriter)).To(Equal(expected))
 		})
 	})
+	Context("Intersect", func() {
+		Specify("intersect", func() {
+			Expect(Intersect([]string{"a", "b", "c"}, []string{"b"})).To(Equal([]string{"b"}))
+		})
+		Specify("disjoint", func() {
+			Expect(Intersect([]string{"a", "b", "c"}, []string{"f", "g", "h"})).To(HaveLen(0))
+		})
+	})
 })

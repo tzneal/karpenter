@@ -20,7 +20,6 @@ limitations under the License.
 package v1alpha5
 
 import (
-	"github.com/aws/karpenter/pkg/utils/sets"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"knative.dev/pkg/apis"
@@ -232,13 +231,6 @@ func (in *Requirements) DeepCopyInto(out *Requirements) {
 		*out = make([]v1.NodeSelectorRequirement, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
-	}
-	if in.requirements != nil {
-		in, out := &in.requirements, &out.requirements
-		*out = make(map[string]sets.Set, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val.DeepCopy()
 		}
 	}
 }
