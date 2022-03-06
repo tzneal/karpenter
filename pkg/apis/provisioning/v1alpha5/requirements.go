@@ -177,7 +177,6 @@ func MergeRequirement(lhs v1.NodeSelectorRequirement, rhs v1.NodeSelectorRequire
 			lhs.Operator = v1.NodeSelectorOpIn
 			lhs.Values = functional.Subtract(rhs.Values, lhs.Values)
 		} else {
-			// TODO(todd): need to think about this, but generate an invalid match for now
 			lhs.Operator = v1.NodeSelectorOpIn
 			lhs.Values = nil
 		}
@@ -186,7 +185,6 @@ func MergeRequirement(lhs v1.NodeSelectorRequirement, rhs v1.NodeSelectorRequire
 	} else if lhs.Operator == v1.NodeSelectorOpNotIn {
 		lhs.Values = functional.Union(lhs.Values, rhs.Values)
 	} else {
-		// TODO(todd): need to think about this
 		lhs.Operator = v1.NodeSelectorOpIn
 		lhs.Values = nil
 	}

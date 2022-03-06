@@ -16,15 +16,17 @@ package scheduling
 
 import (
 	"fmt"
-	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
-	"github.com/aws/karpenter/pkg/utils/resources"
+	"math/rand"
+	"sync"
+
 	"go.uber.org/atomic"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	stringsets "k8s.io/apimachinery/pkg/util/sets"
-	"math/rand"
-	"sync"
+
+	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
+	"github.com/aws/karpenter/pkg/utils/resources"
 )
 
 type VirtualNode struct {
@@ -32,14 +34,16 @@ type VirtualNode struct {
 	pods             []*v1.Pod
 	nodeRequirements map[string]*nodeRequirement
 	gpuResourceTypes stringsets.String
+	cluster          *VirtualCluster
 }
 
 var nodeNumber atomic.Int32
 var randSuffix int
 var once sync.Once
 
-func NewVirtualNode() *VirtualNode {
+func NewVirtualNode(c *VirtualCluster) *VirtualNode {
 	once.Do(func() {
+		// #nosec G404 - not using this for cryptographic purposes
 		randSuffix = rand.Int()
 	})
 
@@ -51,6 +55,7 @@ func NewVirtualNode() *VirtualNode {
 				Labels: map[string]string{v1.LabelHostname: hostname},
 			},
 		},
+		cluster:          c,
 		nodeRequirements: map[string]*nodeRequirement{},
 		gpuResourceTypes: stringsets.NewString(),
 	}
@@ -83,8 +88,8 @@ func (n *nodeRequirement) Conflicts(req v1.NodeSelectorRequirement) bool {
 			} else if result.Operator == v1.NodeSelectorOpNotIn {
 				// additional 'not in' shouldn't be an issue
 			} else {
-				// TODO(todd): what to do here
-				panic("figure this out")
+				// shouldn't occur
+				return false
 			}
 		}
 	}
@@ -92,47 +97,68 @@ func (n *nodeRequirement) Conflicts(req v1.NodeSelectorRequirement) bool {
 }
 
 func (n *VirtualNode) CanService(p *v1.Pod) bool {
-	podGPURequests := resources.GPULimitsFor(p)
-	// both the node and this potential pod have some type of GPU requests
-	if len(n.gpuResourceTypes) != 0 && len(podGPURequests) != 0 {
-		for k := range podGPURequests {
-			if !n.gpuResourceTypes.Has(string(k)) {
-				return false
-			}
-		}
+	if !n.isGPUCompatible(p) {
+		return false
 	}
 
-	// do our current node requirements conflict with the pod's additional requirements?
-	for _, req := range n.getNodeAffinityRequirements(p) {
-		if exReq, ok := n.nodeRequirements[req.Key]; ok && exReq.Conflicts(req) {
-			return false
-		}
+	if !n.isPodCompatibleWithNode(p) {
+		return false
 	}
 
 	var selector labels.Selector
+
+	var nodeLabelKeys []string
 	// first check pod node selectors
 	if len(p.Spec.NodeSelector) > 0 {
 		nodeSel := map[string]string{}
 		for k, v := range p.Spec.NodeSelector {
 			if _, ok := n.node.Labels[k]; ok {
 				nodeSel[k] = v
+				nodeLabelKeys = append(nodeLabelKeys, k)
 			}
 		}
 		selector = labels.SelectorFromSet(nodeSel)
 	}
-
 	nodeLabels := labels.Set(n.node.Labels)
 	if selector != nil && !selector.Matches(nodeLabels) {
 		return false
 	}
 
-	// does the pod's node affinity match this node?
-	sel := buildSelector(getNodeSelectorRequirements(p))
+	// the pod's node affinity
+	sel := buildSelectorForOnly(n.cluster.getRequiredNodeSelectorRequirements(p), nodeLabelKeys...)
 	if !sel.Matches(nodeLabels) {
 		return false
 	}
 
-	return true
+	// check pod affinity/anti-affinity to other pods on the node
+	paf := getPodAffinityRequirements(p)
+	_, hardFailure := paf.Score(n.pods)
+
+	// we can service it as long as there's no hard affinity conflict
+	return !hardFailure
+}
+
+func getPodAffinityRequirements(p *v1.Pod) podaffinity {
+	var pa podaffinity
+	if p.Spec.Affinity != nil {
+		if p.Spec.Affinity.PodAffinity != nil {
+			for _, term := range p.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+				pa.AddRequired(term)
+			}
+			for _, term := range p.Spec.Affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+				pa.AddPreferred(term)
+			}
+		}
+		if p.Spec.Affinity.PodAntiAffinity != nil {
+			for _, term := range p.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+				pa.AddRequiredAnti(term)
+			}
+			for _, term := range p.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+				pa.AddPreferredAnti(term)
+			}
+		}
+	}
+	return pa
 }
 
 func (n *VirtualNode) AddPod(p *v1.Pod) error {
@@ -145,8 +171,16 @@ func (n *VirtualNode) AddPod(p *v1.Pod) error {
 		n.node.Labels[k] = v
 	}
 
+	// commit back the node name to the pod
+	if p.Spec.NodeSelector[v1.LabelHostname] == "" {
+		p.Spec.NodeSelector[v1.LabelHostname] = n.node.Name
+	} else if p.Spec.NodeSelector[v1.LabelHostname] != n.node.Name {
+		return fmt.Errorf("aattmpted to cheduled pod with node selector %s=%s to %s", v1.LabelHostname,
+			p.Spec.NodeSelector[v1.LabelHostname], n.node.Name)
+	}
+
 	// update our running set of node requirements
-	for _, req := range n.getNodeAffinityRequirements(p) {
+	for _, req := range getNodeAffinityRequirements(p) {
 		if _, ok := n.nodeRequirements[req.Key]; !ok {
 			n.nodeRequirements[req.Key] = &nodeRequirement{}
 		}
@@ -163,7 +197,32 @@ func (n *VirtualNode) AddPod(p *v1.Pod) error {
 	return nil
 }
 
-func (n *VirtualNode) getNodeAffinityRequirements(p *v1.Pod) []v1.NodeSelectorRequirement {
+// isGPUCompatible returns true if the pod's GPU requirements are compatible with the node's GPU resources
+func (n *VirtualNode) isGPUCompatible(p *v1.Pod) bool {
+	podGPURequests := resources.GPULimitsFor(p)
+	// both the node and this potential pod have some type of GPU requests
+	if len(n.gpuResourceTypes) != 0 && len(podGPURequests) != 0 {
+		for k := range podGPURequests {
+			if !n.gpuResourceTypes.Has(string(k)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isPodCompatibleWithNode returns true if the pod's node affinity requirements are compatible with the node
+func (n *VirtualNode) isPodCompatibleWithNode(p *v1.Pod) bool {
+	// do our current node requirements conflict with the pod's additional requirements?
+	for _, req := range getNodeAffinityRequirements(p) {
+		if exReq, ok := n.nodeRequirements[req.Key]; ok && exReq.Conflicts(req) {
+			return false
+		}
+	}
+	return true
+}
+
+func getNodeAffinityRequirements(p *v1.Pod) []v1.NodeSelectorRequirement {
 	var rqts []v1.NodeSelectorRequirement
 	if p.Spec.Affinity != nil && p.Spec.Affinity.NodeAffinity != nil && p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
 		for _, term := range p.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {

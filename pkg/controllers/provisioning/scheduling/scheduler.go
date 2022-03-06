@@ -16,8 +16,10 @@ package scheduling
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/multierr"
+	"knative.dev/pkg/logging"
 
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
@@ -29,6 +31,10 @@ import (
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/metrics"
 )
+
+// this is used internally only to mark why we've failed to schedule a pod to
+// provide a better user experience
+const scheduleFailureReasonKey = "karpenter.sh/scheduleFailureReason"
 
 var schedulingDuration = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
@@ -63,14 +69,25 @@ func NewScheduler(kubeClient client.Client) *Scheduler {
 
 func (s *Scheduler) Solve(ctx context.Context, provisioner *v1alpha5.Provisioner, pods []*v1.Pod) ([]*Schedule, error) {
 	defer metrics.Measure(schedulingDuration.WithLabelValues(injection.GetNamespacedName(ctx).Name))()
+
+	start := time.Now()
 	cluster := NewVirtualCluster(provisioner, s.KubeClient)
-	var err error
+	var merr error
+	pods, merr = cluster.SortPods(ctx, pods)
+
 	for _, p := range pods {
-		err = multierr.Append(err, cluster.SchedulePod(ctx, p))
+		_, err := cluster.SchedulePod(ctx, p)
+		if err != nil {
+			merr = multierr.Append(merr, err)
+		}
 	}
 
 	var schedules []*Schedule
 	for _, vn := range cluster.nodes {
+		if len(vn.pods) == 0 {
+			logging.FromContext(ctx).Errorf("scheduling error, vn with zero pods")
+			continue
+		}
 		// TODO(todd): rework this
 		tightened := provisioner.Spec.Constraints.Tighten(vn.pods[0])
 		schedules = append(schedules, &Schedule{
@@ -78,5 +95,6 @@ func (s *Scheduler) Solve(ctx context.Context, provisioner *v1alpha5.Provisioner
 			Pods:        vn.pods,
 		})
 	}
-	return schedules, err
+	logging.FromContext(ctx).Infof("identified %d compatible batches of pods in %s", len(schedules), time.Since(start))
+	return schedules, merr
 }

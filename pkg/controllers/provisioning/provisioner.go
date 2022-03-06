@@ -89,7 +89,7 @@ func (p *Provisioner) provision(ctx context.Context) error {
 	defer p.batcher.Flush()
 	logging.FromContext(ctx).Infof("Batched %d pods in %s", len(items), window)
 	// Filter pods
-	pods := []*v1.Pod{}
+	var pods []*v1.Pod
 	for _, item := range items {
 		provisionable, err := p.isProvisionable(ctx, item.(*v1.Pod))
 		if err != nil {

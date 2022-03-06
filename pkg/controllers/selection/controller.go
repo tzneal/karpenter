@@ -138,17 +138,27 @@ func validateTopology(pod *v1.Pod) (errs error) {
 	return errs
 }
 
+//gocyclo:ignore
 func validateAffinity(p *v1.Pod) (errs error) {
-	if p.Spec.Affinity == nil {
-		return nil
-	}
 	if pod.HasPodAffinity(p) {
-		errs = multierr.Append(errs, fmt.Errorf("pod affinity is not supported"))
+		for _, term := range p.Spec.Affinity.PodAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+			errs = multierr.Append(errs, validatePodAffinityTerm(term))
+		}
+		for _, term := range p.Spec.Affinity.PodAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+			errs = multierr.Append(errs, validateWeightedPodAffinityTerm(term))
+		}
 	}
+
 	if pod.HasPodAntiAffinity(p) {
-		errs = multierr.Append(errs, fmt.Errorf("pod anti-affinity is not supported"))
+		for _, term := range p.Spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution {
+			errs = multierr.Append(errs, validatePodAffinityTerm(term))
+		}
+		for _, term := range p.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+			errs = multierr.Append(errs, validateWeightedPodAffinityTerm(term))
+		}
 	}
-	if p.Spec.Affinity.NodeAffinity != nil {
+
+	if p.Spec.Affinity != nil && p.Spec.Affinity.NodeAffinity != nil {
 		for _, term := range p.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
 			errs = multierr.Append(errs, validateNodeSelectorTerm(term.Preference))
 		}
@@ -159,6 +169,20 @@ func validateAffinity(p *v1.Pod) (errs error) {
 		}
 	}
 	return errs
+}
+
+func validatePodAffinityTerm(term v1.PodAffinityTerm) error {
+	if !v1alpha5.SupportedAffinityKeys.Has(term.TopologyKey) {
+		return fmt.Errorf("pod affinity has unsupported key, %s", term.TopologyKey)
+	}
+	return nil
+}
+
+func validateWeightedPodAffinityTerm(term v1.WeightedPodAffinityTerm) error {
+	if !v1alpha5.SupportedAffinityKeys.Has(term.PodAffinityTerm.TopologyKey) {
+		return fmt.Errorf("pod affinity preference has unsupported key, %s", term.PodAffinityTerm.TopologyKey)
+	}
+	return nil
 }
 
 func validateNodeSelectorTerm(term v1.NodeSelectorTerm) (errs error) {
