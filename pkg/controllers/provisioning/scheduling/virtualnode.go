@@ -223,7 +223,15 @@ func (n *VirtualNode) AddPod(p *v1.Pod) error {
 // isGPUCompatible returns true if the pod's GPU requirements are compatible with the node's GPU resources
 func (n *VirtualNode) isGPUCompatible(p *v1.Pod) bool {
 	podGPURequests := resources.GPULimitsFor(p)
-	// both the node and this potential pod have some type of GPU requests
+
+	// Isolate GPU workloads from non-GPU workloads. If this isn't done, we would consider them compatible and possibly
+	// schedule them together.  The problem with this is that the binpacker may then create a GPU node for the non-GPU
+	// workloads if they don't all fit on the same node.
+	if len(podGPURequests) != len(n.gpuResourceTypes) {
+		return false
+	}
+
+	// both the node and this potential pod have some type of GPU requests, so they must match
 	if len(n.gpuResourceTypes) != 0 && len(podGPURequests) != 0 {
 		for k := range podGPURequests {
 			if !n.gpuResourceTypes.Has(string(k)) {
@@ -231,6 +239,7 @@ func (n *VirtualNode) isGPUCompatible(p *v1.Pod) bool {
 			}
 		}
 	}
+
 	return true
 }
 

@@ -207,6 +207,29 @@ var _ = Describe("Allocation", func() {
 				}
 				Expect(nodeNames.Len()).To(Equal(2))
 			})
+			It("should not combine GPU and non-GPU workloads", func() {
+				nodeNames := sets.NewString()
+				for _, pod := range ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
+					test.UnschedulablePod(test.PodOptions{
+						ResourceRequirements: v1.ResourceRequirements{
+							Requests: v1.ResourceList{resources.NvidiaGPU: resource.MustParse("1")},
+							Limits:   v1.ResourceList{resources.NvidiaGPU: resource.MustParse("1")},
+						},
+					}),
+					// Should pack not onto same instance
+					test.UnschedulablePod(test.PodOptions{}),
+				) {
+					node := ExpectScheduled(ctx, env.Client, pod)
+					if len(pod.Spec.Containers[0].Resources.Requests) > 0 {
+						Expect(node.Labels).To(HaveKeyWithValue(v1.LabelInstanceTypeStable, "p3.8xlarge"))
+					} else {
+						Expect(node.Labels).ToNot(HaveKeyWithValue(v1.LabelInstanceTypeStable, "p3.8xlarge"))
+					}
+					nodeNames.Insert(node.Name)
+				}
+				Expect(nodeNames.Len()).To(Equal(2))
+			})
+
 			It("should launch instances for AWS Neuron resource requests", func() {
 				nodeNames := sets.NewString()
 				for _, pod := range ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
