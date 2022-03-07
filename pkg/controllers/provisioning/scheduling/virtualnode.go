@@ -34,7 +34,13 @@ type VirtualNode struct {
 	pods             []*v1.Pod
 	nodeRequirements map[string]*nodeRequirement
 	gpuResourceTypes stringsets.String
+	usedPorts        map[portInfo]struct{}
 	cluster          *VirtualCluster
+}
+
+type portInfo struct {
+	proto v1.Protocol
+	port  int32
 }
 
 var nodeNumber atomic.Int32
@@ -58,6 +64,7 @@ func NewVirtualNode(c *VirtualCluster) *VirtualNode {
 		cluster:          c,
 		nodeRequirements: map[string]*nodeRequirement{},
 		gpuResourceTypes: stringsets.NewString(),
+		usedPorts:        map[portInfo]struct{}{},
 	}
 }
 
@@ -102,6 +109,10 @@ func (n *VirtualNode) CanService(p *v1.Pod) bool {
 	}
 
 	if !n.isPodCompatibleWithNode(p) {
+		return false
+	}
+
+	if !n.isPodCompatibleWithNetworking(p) {
 		return false
 	}
 
@@ -193,6 +204,18 @@ func (n *VirtualNode) AddPod(p *v1.Pod) error {
 	for k := range resources.GPULimitsFor(p) {
 		n.gpuResourceTypes.Insert(string(k))
 	}
+
+	// record which host ports this pod uses so we don't conflict with another pod
+	for _, c := range p.Spec.Containers {
+		for _, port := range c.Ports {
+			if port.HostPort != 0 {
+				n.usedPorts[portInfo{
+					proto: port.Protocol,
+					port:  port.HostPort,
+				}] = struct{}{}
+			}
+		}
+	}
 	n.pods = append(n.pods, p)
 	return nil
 }
@@ -217,6 +240,21 @@ func (n *VirtualNode) isPodCompatibleWithNode(p *v1.Pod) bool {
 	for _, req := range getNodeAffinityRequirements(p) {
 		if exReq, ok := n.nodeRequirements[req.Key]; ok && exReq.Conflicts(req) {
 			return false
+		}
+	}
+	return true
+}
+
+func (n *VirtualNode) isPodCompatibleWithNetworking(p *v1.Pod) bool {
+	// don't allow any conflicts between HostPort
+	for _, c := range p.Spec.Containers {
+		for _, port := range c.Ports {
+			if _, exists := n.usedPorts[portInfo{
+				proto: port.Protocol,
+				port:  port.HostPort,
+			}]; exists {
+				return false
+			}
 		}
 	}
 	return true

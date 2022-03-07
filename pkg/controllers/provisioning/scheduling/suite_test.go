@@ -1374,6 +1374,62 @@ var _ = Describe("Taints", func() {
 	})
 })
 
+var _ = Describe("Incompatible pod networking", func() {
+	Context("container HostPort usage", func() {
+		It("shouldn't co-locate pods that use the same HostPort and protocol", func() {
+			port := v1.ContainerPort{
+				Name:          "test-port",
+				HostPort:      80,
+				ContainerPort: 1234,
+				Protocol:      "TCP",
+			}
+			pod1 := test.UnschedulablePod()
+			pod1.Spec.Containers[0].Ports = append(pod1.Spec.Containers[0].Ports, port)
+			pod2 := test.UnschedulablePod()
+			pod2.Spec.Containers[0].Ports = append(pod2.Spec.Containers[0].Ports, port)
+
+			ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod1, pod2)
+			node1 := ExpectScheduled(ctx, env.Client, pod1)
+			node2 := ExpectScheduled(ctx, env.Client, pod2)
+			Expect(node1.Name).ToNot(Equal(node2.Name))
+		})
+		It("should co-locate pods that use the same HostPort but a different protocol", func() {
+			port := v1.ContainerPort{
+				Name:          "test-port",
+				HostPort:      80,
+				ContainerPort: 1234,
+				Protocol:      "TCP",
+			}
+			pod1 := test.UnschedulablePod()
+			pod1.Spec.Containers[0].Ports = append(pod1.Spec.Containers[0].Ports, port)
+			pod2 := test.UnschedulablePod()
+			port.Protocol = "UDP"
+			pod2.Spec.Containers[0].Ports = append(pod2.Spec.Containers[0].Ports, port)
+
+			ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod1, pod2)
+			node1 := ExpectScheduled(ctx, env.Client, pod1)
+			node2 := ExpectScheduled(ctx, env.Client, pod2)
+			Expect(node1.Name).To(Equal(node2.Name))
+		})
+		It("should co-locate pods that don't use HostPort", func() {
+			port := v1.ContainerPort{
+				Name:          "test-port",
+				ContainerPort: 1234,
+				Protocol:      "TCP",
+			}
+			pod1 := test.UnschedulablePod()
+			pod1.Spec.Containers[0].Ports = append(pod1.Spec.Containers[0].Ports, port)
+			pod2 := test.UnschedulablePod()
+			pod2.Spec.Containers[0].Ports = append(pod2.Spec.Containers[0].Ports, port)
+
+			ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, pod1, pod2)
+			node1 := ExpectScheduled(ctx, env.Client, pod1)
+			node2 := ExpectScheduled(ctx, env.Client, pod2)
+			Expect(node1.Name).To(Equal(node2.Name))
+		})
+	})
+})
+
 func MakePods(count int, options test.PodOptions) (pods []*v1.Pod) {
 	for i := 0; i < count; i++ {
 		pods = append(pods, test.UnschedulablePod(options))
