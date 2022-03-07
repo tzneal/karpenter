@@ -36,6 +36,7 @@ import (
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 )
 
+// VirtualCluster represents a simulated cluster that holds VirtualNodes which hold sets of compatible pods.
 type VirtualCluster struct {
 	nodes            []*VirtualNode
 	zones            sets.String
@@ -570,7 +571,8 @@ func (vc *VirtualCluster) getRequiredNodeSelectorRequirements(p *v1.Pod) []v1.No
 }
 
 // SortPods prepares pods for scheduling by identifying topology constraints, looking up counts for the domains and
-// returning a list of pods topologically sorted by pod affinity relationships.
+// returning a list of pods topologically sorted by pod affinity relationships.  This ensures that if pods A,B,C have
+// affinities such that A->B->C, the pod order in the resulting list will be C,B,A.
 func (vc *VirtualCluster) SortPods(ctx context.Context, pods []*v1.Pod) ([]*v1.Pod, error) {
 	podLookup := map[client.ObjectKey]*v1.Pod{}
 	var g TopoGraph

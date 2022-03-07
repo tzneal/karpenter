@@ -29,6 +29,8 @@ import (
 	"github.com/aws/karpenter/pkg/utils/resources"
 )
 
+// VirtualNode is used to hold a set of pods that are mutually compatible with one another.  This may or may not be
+// scheduled to the same node later via bin-packing, but the pods are all capable of being scheduled on a single node.
 type VirtualNode struct {
 	node             v1.Node
 	pods             []*v1.Pod
@@ -47,6 +49,9 @@ var nodeNumber atomic.Int32
 var randSuffix int
 var once sync.Once
 
+// NewVirtualNode constructs a new virtual node that is associated with the cluster c.  The node is not directly
+// added to the cluster to support the use case of creating a node to satisfy a topology constraint and then not
+// using the node later on if there is another unsatisfiable constraint.
 func NewVirtualNode(c *VirtualCluster) *VirtualNode {
 	once.Do(func() {
 		// #nosec G404 - not using this for cryptographic purposes
@@ -72,18 +77,25 @@ type nodeRequirement struct {
 	reqs []v1.NodeSelectorRequirement
 }
 
+// Intersect adds a new requirement to the set of node selector requirements.
 func (n *nodeRequirement) Intersect(req v1.NodeSelectorRequirement) {
 	if len(n.reqs) == 0 {
 		n.reqs = append(n.reqs, req)
 		return
 	}
+	merged := false
 	for i, r := range n.reqs {
 		if r.Key == req.Key {
 			n.reqs[i] = v1alpha5.MergeRequirement(r, req)
+			merged = true
 		}
+	}
+	if !merged {
+		n.reqs = append(n.reqs, req)
 	}
 }
 
+// Conflicts returns true if the requirement req would cause the set of node requirements to become unsatisfiable.
 func (n *nodeRequirement) Conflicts(req v1.NodeSelectorRequirement) bool {
 	for _, r := range n.reqs {
 		if r.Key == req.Key {
@@ -103,6 +115,8 @@ func (n *nodeRequirement) Conflicts(req v1.NodeSelectorRequirement) bool {
 	return false
 }
 
+// CanService returns true if the node is compatible with the pod with respect to GPU resources, pod node selectors,
+// networking configuration, node affinity, etc.
 func (n *VirtualNode) CanService(p *v1.Pod) bool {
 	if !n.isGPUCompatible(p) {
 		return false
@@ -172,6 +186,8 @@ func getPodAffinityRequirements(p *v1.Pod) podaffinity {
 	return pa
 }
 
+// AddPod binds a pod to the node.  This may cause the node to become more specific (e.g. if it can currently be
+// in zone-1 or zone-2, but the additional pod must be in zone-1, the node is then limited to zone-1 as well.
 func (n *VirtualNode) AddPod(p *v1.Pod) error {
 	if n.node.Labels == nil {
 		n.node.Labels = map[string]string{}

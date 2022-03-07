@@ -40,6 +40,7 @@ const (
 	affinityDerivationPodAntiAffinity
 )
 
+// Topology is used to track pod counts that match a selector by the topology domain (e.g. SELECT COUNT(*) FROM pods GROUP BY(topology_ke
 type Topology struct {
 	Key                string
 	MaxSkew            int32

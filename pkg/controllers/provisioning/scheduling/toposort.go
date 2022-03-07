@@ -16,6 +16,8 @@ package scheduling
 
 import "sigs.k8s.io/controller-runtime/pkg/client"
 
+// TopoGraph is used to construct a topological sorting of K8s objects.  The resulting list
+// includes all items in the graph with any cycles sorted last.
 type TopoGraph struct {
 	edges map[client.ObjectKey][]client.ObjectKey
 }
@@ -39,6 +41,7 @@ func (g *TopoGraph) AddEdge(from client.ObjectKey, to client.ObjectKey) {
 	g.edges[from] = append(g.edges[from], to)
 }
 
+// Sorted returns a
 func (g *TopoGraph) Sorted() []client.ObjectKey {
 	inDegress := map[client.ObjectKey]int{}
 	for _, toList := range g.edges {

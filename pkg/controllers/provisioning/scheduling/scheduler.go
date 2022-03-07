@@ -72,17 +72,20 @@ func (s *Scheduler) Solve(ctx context.Context, provisioner *v1alpha5.Provisioner
 
 	start := time.Now()
 	cluster := NewVirtualCluster(provisioner, s.KubeClient)
+
 	var merr error
+	// construct a topological sort of our pods by pod affinities
 	pods, merr = cluster.SortPods(ctx, pods)
 
+	// schedule our pods onto virtual nodes
 	for _, p := range pods {
 		_, err := cluster.SchedulePod(ctx, p)
-		if err != nil {
-			merr = multierr.Append(merr, err)
-		}
+		merr = multierr.Append(merr, err)
 	}
 
 	var schedules []*Schedule
+	// since each virtual node contains a set of compatible pods, we return those to the bin-packer
+	// to construct 1 to N actual nodes for each virtual node.
 	for _, vn := range cluster.nodes {
 		if len(vn.pods) == 0 {
 			logging.FromContext(ctx).Errorf("scheduling error, vn with zero pods")
