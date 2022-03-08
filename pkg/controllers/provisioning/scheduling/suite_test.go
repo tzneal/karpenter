@@ -1249,6 +1249,9 @@ var _ = Describe("Topology", func() {
 			Expect(n1.Name).To(Equal(n2.Name))
 		})
 		It("should filter pod affinity topologies by namespace, matching pods namespace selector", func() {
+			if env.K8sVer.Minor() < 21 {
+				Skip("namespace selector is only supported on K8s >= 1.21.x")
+			}
 			topology := []v1.TopologySpreadConstraint{{
 				TopologyKey:       v1.LabelHostname,
 				WhenUnsatisfiable: v1.DoNotSchedule,

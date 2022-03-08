@@ -3,6 +3,7 @@ module github.com/aws/karpenter
 go 1.17
 
 require (
+	github.com/Masterminds/semver v1.5.0
 	github.com/Pallinder/go-randomdata v1.2.0
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/aws/amazon-vpc-resource-controller-k8s v1.1.0
