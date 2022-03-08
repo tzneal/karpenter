@@ -78,9 +78,24 @@ func (s *Scheduler) Solve(ctx context.Context, provisioner *v1alpha5.Provisioner
 	pods, merr = cluster.SortPods(ctx, pods)
 
 	// schedule our pods onto virtual nodes
-	for _, p := range pods {
-		_, err := cluster.SchedulePod(ctx, p)
-		merr = multierr.Append(merr, err)
+
+	// TODD(todd): I really don't like this schedule & retry method, but haven't come up with a better solution yet.
+	// The problem this solves is if you get 5 pods that can only be in zone-1 and 5 pods that can only be in zone-2
+	// with a zonal topology spread.  To avoid violating max-skew, you have to alternatively schedule them.
+	unScheduled := pods
+	for {
+		currentSet := unScheduled
+		unScheduled = nil
+		for _, p := range currentSet {
+			scheduled, err := cluster.SchedulePod(ctx, p)
+			if !scheduled {
+				unScheduled = append(unScheduled, p)
+			}
+			merr = multierr.Append(merr, err)
+		}
+		if len(unScheduled) == len(currentSet) {
+			break
+		}
 	}
 
 	var schedules []*Schedule

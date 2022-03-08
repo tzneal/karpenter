@@ -726,28 +726,34 @@ var _ = Describe("Topology", func() {
 
 	// https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/#interaction-with-node-affinity-and-node-selectors
 	Context("Combined Zonal Topology and Node Affinity", func() {
-		It("should limit spread options by nodeSelector", func() {
+		FIt("should limit spread options by nodeSelector", func() {
 			topology := []v1.TopologySpreadConstraint{{
 				TopologyKey:       v1.LabelTopologyZone,
-				WhenUnsatisfiable: v1.ScheduleAnyway,
+				WhenUnsatisfiable: v1.DoNotSchedule,
 				LabelSelector:     &metav1.LabelSelector{MatchLabels: labels},
 				MaxSkew:           1,
 			}}
+			// need to limit the provisioner to only zone-1, zone-2 or else it will know that test-zone-3 has 0 pods and won't violate
+			// the max-skew
+			provisioner.Spec.Requirements = v1alpha5.NewRequirements(
+				v1.NodeSelectorRequirement{Key: v1.LabelTopologyZone, Operator: v1.NodeSelectorOpIn, Values: []string{"test-zone-1", "test-zone-2"}})
 			ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner,
 				append(
-					MakePods(5, test.PodOptions{
+					MakePods(25, test.PodOptions{
 						ObjectMeta:                metav1.ObjectMeta{Labels: labels},
 						TopologySpreadConstraints: topology,
 						NodeSelector:              map[string]string{v1.LabelTopologyZone: "test-zone-1"},
 					}),
-					MakePods(5, test.PodOptions{
+					MakePods(25, test.PodOptions{
 						ObjectMeta:                metav1.ObjectMeta{Labels: labels},
 						TopologySpreadConstraints: topology,
 						NodeSelector:              map[string]string{v1.LabelTopologyZone: "test-zone-2"},
 					})...,
 				)...,
 			)
-			ExpectSkew(ctx, env.Client, "default", &topology[0]).To(ConsistOf(5, 5))
+			// This test is a bit tricky for the scheduler.  Since the pods can come in any order, it needs to alternate
+			// scheduling pods between the first batch and second batch, or else it would violate max-skew mid-schedule.
+			ExpectSkew(ctx, env.Client, "default", &topology[0]).To(ConsistOf(25, 25))
 		})
 		It("should limit spread options by node affinity", func() {
 			topology := []v1.TopologySpreadConstraint{{
