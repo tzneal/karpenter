@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/runtime"
 	utilsets "k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/utils/sets"
 )
 
@@ -80,31 +79,25 @@ func NewTopologyGroup(topologyType TopologyType, key string, namespaces utilsets
 	}
 }
 
-func (t *TopologyGroup) Next(requirements v1alpha5.Requirements, selfSelecting bool) (string, error) {
-	var nextDomain string
-	var maxSkew int32
-	var increasingSkew bool
+func (t *TopologyGroup) Next(pod *v1.Pod, allowedDomains sets.Set) (string, error) {
+	domains := sets.NewSet()
+	for domain := range t.domains {
+		domains.Insert(domain)
+	}
+	domains = domains.Intersection(allowedDomains)
+	if domains.Len() == 0 {
+		return "", fmt.Errorf("%s violated, no viable domain for topology spread with key %s", t.Key, "TODO")
+	}
 	switch t.Type {
 	case TopologyTypeSpread:
-		nextDomain, maxSkew, increasingSkew = t.nextDomainMinimizeSkew(requirements)
-		if maxSkew > t.maxSkew && increasingSkew {
-			return "", fmt.Errorf("would violate max-skew for topology key %s", t.Key)
-		}
+		return t.nextTopologySpreadDomain(domains), nil
 	case TopologyTypePodAffinity:
-		nextDomain = t.maxNonZeroDomain(requirements)
-		// we don't have a valid domain, but it's pod affinity and the pod itself will satisfy the topology
-		// constraint , so check for any domain as long as it's the first one the pod will land in
-		if nextDomain == "" && selfSelecting && !t.hasNonEmptyDomains() {
-			nextDomain = t.anyDomain(requirements)
-		}
+		return t.nextAffinityDomain(pod, domains)
 	case TopologyTypePodAntiAffinity:
-		nextDomain = t.emptyDomain(requirements)
+		return t.nextAntiAffinitydomain(domains)
+	default:
+		return "", fmt.Errorf("unknown topology type %s", t.Type)
 	}
-
-	if nextDomain == "" {
-		return "", fmt.Errorf("unsatisfiable %s topology constraint for key %s", t.Type, t.Key)
-	}
-	return nextDomain, nil
 }
 
 func (t *TopologyGroup) Record(domains ...string) {
@@ -159,126 +152,43 @@ func (t *TopologyGroup) Hash() uint64 {
 	return hash
 }
 
-// nextDomainMinimizeSkew returns the best domain to choose next and what the max-skew would be if we
-// chose that domain
-func (t *TopologyGroup) nextDomainMinimizeSkew(requirements v1alpha5.Requirements) (minDomain string, maxSkew int32, increasingSkew bool) {
-	var requirement sets.Set
-	if requirements.Has(t.Key) {
-		requirement = requirements.Get(t.Key)
-	} else {
-		requirement = sets.NewComplementSet()
-	}
-
-	localMin := int32(math.MaxInt32)  // minimum count for a domain that is possible given the constraints
-	globalMin := int32(math.MaxInt32) // minimum count for the domain
-	globalMax := int32(0)
-	for domain, count := range t.domains {
-		if count < globalMin {
-			globalMin = count
-		}
-		if count > globalMax {
-			globalMax = count
-		}
-
-		// we only consider domains that match the pod's node affinity for the purposes
-		// of what we select as our next domain
-		if requirement.Has(domain) {
-			if count < localMin {
-				localMin = count
-				minDomain = domain
-			}
+func (t *TopologyGroup) nextTopologySpreadDomain(domains sets.Set) string {
+	// Pick the domain that minimizes skew.
+	min := int32(math.MaxInt32)
+	minDomain := ""
+	for domain := range domains.Values() {
+		if t.domains[domain] < min {
+			min = t.domains[domain]
+			minDomain = domain
 		}
 	}
-
-	// if the topology key is hostname, we can always create a new node with a unique hotsname so there's effectively
-	// always a global min of zero
-	if t.Key == v1.LabelHostname {
-		globalMin = 0
-	}
-
-	// none of the topology domains have any pods assigned, so we'll just be at
-	// a max-skew of 1 when we create something
-	if globalMax == 0 {
-		return minDomain, 1, true
-	}
-
-	// Calculate what the max skew will be if we chose the min domain.
-	maxSkew = globalMax - (localMin + 1)
-	if globalMin != localMin {
-		// if the global min is less than the count of pods in domains that match the node selector
-		// the max-skew is based on the global min as we can't change it
-		maxSkew = globalMax - globalMin
-	}
-	// the domain we're allowed to pick happens to be the maximum value, so by picking it we are increasing skew
-	// even more
-	if localMin == globalMax {
-		maxSkew++
-	}
-
-	// We need to know if we are increasing or decreasing skew.  If we are above the max-skew, but assigning this
-	// topology domain decreases skew, we should do it.
-	oldMaxSkew := globalMax - globalMin
-	increasingSkew = maxSkew > oldMaxSkew
-	return
+	return minDomain
 }
 
-func (t *TopologyGroup) anyDomain(requirements v1alpha5.Requirements) string {
-	var requirement sets.Set
-	if requirements.Has(t.Key) {
-		requirement = requirements.Get(t.Key)
-	} else {
-		requirement = sets.NewComplementSet()
-	}
-	for domain := range t.domains {
-		if requirement.Has(domain) {
-			return domain
+func (t *TopologyGroup) nextAffinityDomain(pod *v1.Pod, domains sets.Set) (string, error) {
+	// Pick any domain that exists, but choose the max to optimize density
+	max := int32(0)
+	maxDomain := ""
+	for domain := range domains.Values() {
+		if t.domains[domain] > max {
+			max = t.domains[domain]
+			maxDomain = domain
 		}
 	}
-	return ""
+	if max > 0 {
+		return maxDomain, nil
+	}
+	if t.Matches(pod.Namespace, pod.Labels) {
+		return maxDomain, nil
+	}
+	return "", fmt.Errorf("no affinity to %s TODO", "")
 }
 
-func (t *TopologyGroup) maxNonZeroDomain(requirements v1alpha5.Requirements) string {
-	var requirement sets.Set
-	if requirements.Has(t.Key) {
-		requirement = requirements.Get(t.Key)
-	} else {
-		requirement = sets.NewComplementSet()
-	}
-	maxCount := int32(math.MinInt32)
-	var maxDomain string
-	for domain, count := range t.domains {
-		// we only consider domains that match the pod's node selectors
-		if requirement.Has(domain) {
-			if count > maxCount {
-				maxCount = count
-				maxDomain = domain
-			}
+func (t *TopologyGroup) nextAntiAffinitydomain(domains sets.Set) (string, error) {
+	for domain := range domains.Values() {
+		if t.domains[domain] == 0 {
+			return domain, nil
 		}
 	}
-	if maxCount == 0 {
-		return ""
-	}
-	return maxDomain
-}
-
-func (t *TopologyGroup) emptyDomain(requirements v1alpha5.Requirements) string {
-	requirement := requirements.Get(t.Key)
-	for domain, count := range t.domains {
-		if !requirement.Has(domain) {
-			continue
-		}
-		if count == 0 {
-			return domain
-		}
-	}
-	return ""
-}
-
-func (t *TopologyGroup) hasNonEmptyDomains() bool {
-	for _, count := range t.domains {
-		if count != 0 {
-			return true
-		}
-	}
-	return false
+	return "", fmt.Errorf("ERROR")
 }

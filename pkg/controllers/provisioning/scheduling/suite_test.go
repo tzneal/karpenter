@@ -1383,7 +1383,7 @@ var _ = Describe("Topology", func() {
 		})
 	})
 
-	Context("Pod Affinity/Anti-Affinity", func() {
+	FContext("Pod Affinity/Anti-Affinity", func() {
 		It("should schedule a pod with empty pod affinity and anti-affinity", func() {
 			ExpectCreated(ctx, env.Client)
 			pod := ExpectProvisioned(ctx, env.Client, selectionController, provisioners, provisioner, test.UnschedulablePod(test.PodOptions{

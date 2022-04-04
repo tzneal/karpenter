@@ -27,8 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/sets"
+	utilsets "k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/aws/karpenter/pkg/utils/sets"
 
 	"github.com/aws/karpenter/pkg/apis/provisioning/v1alpha5"
 	"github.com/aws/karpenter/pkg/utils/pod"
@@ -129,7 +131,13 @@ func (t *Topology) Record(p *v1.Pod, requirements v1alpha5.Requirements) {
 // the case of a set of requirements that cannot be satisfied.
 func (t *Topology) Requirements(requirements v1alpha5.Requirements, p *v1.Pod) (v1alpha5.Requirements, error) {
 	for _, topology := range t.getMatchingTopologies(p) {
-		nextDomain, err := topology.Next(requirements, topology.Matches(p.Namespace, p.Labels))
+
+		domains := sets.NewComplementSet()
+		if requirements.Has(topology.Key) {
+			domains = requirements.Get(topology.Key)
+		}
+
+		nextDomain, err := topology.Next(p, domains)
 		if err != nil {
 			return v1alpha5.Requirements{}, err
 		}
@@ -245,7 +253,7 @@ func (t *Topology) newForTopologies(p *v1.Pod) []*TopologyGroup {
 		topologyGroups = append(topologyGroups, NewTopologyGroup(
 			TopologyTypeSpread,
 			cs.TopologyKey,
-			sets.NewString(p.Namespace),
+			utilsets.NewString(p.Namespace),
 			cs.LabelSelector,
 			cs.MaxSkew,
 			t.requirements.Get(cs.TopologyKey).Values()),
@@ -301,12 +309,12 @@ func (t *Topology) newForAffinities(ctx context.Context, p *v1.Pod) ([]*Topology
 
 // buildNamespaceList constructs a unique list of namespaces consisting of the pod's namespace and the optional list of
 // namespaces and those selected by the namespace selector
-func (t *Topology) buildNamespaceList(ctx context.Context, namespace string, namespaces []string, selector *metav1.LabelSelector) (sets.String, error) {
+func (t *Topology) buildNamespaceList(ctx context.Context, namespace string, namespaces []string, selector *metav1.LabelSelector) (utilsets.String, error) {
 	if len(namespaces) == 0 && selector == nil {
-		return sets.NewString(namespace), nil
+		return utilsets.NewString(namespace), nil
 	}
 	if selector == nil {
-		return sets.NewString(namespaces...), nil
+		return utilsets.NewString(namespaces...), nil
 	}
 	var namespaceList v1.NamespaceList
 	labelSelector, err := metav1.LabelSelectorAsSelector(selector)
@@ -314,7 +322,7 @@ func (t *Topology) buildNamespaceList(ctx context.Context, namespace string, nam
 	if err := t.kubeClient.List(ctx, &namespaceList, &client.ListOptions{LabelSelector: labelSelector}); err != nil {
 		return nil, fmt.Errorf("listing namespaces, %w", err)
 	}
-	selected := sets.NewString()
+	selected := utilsets.NewString()
 	for _, namespace := range namespaceList.Items {
 		selected.Insert(namespace.Name)
 	}
