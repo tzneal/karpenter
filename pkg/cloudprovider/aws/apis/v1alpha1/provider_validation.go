@@ -227,6 +227,7 @@ func (a *AWS) validateEBS(blockDeviceMapping *BlockDeviceMapping) (errs *apis.Fi
 	for _, err := range []*apis.FieldError{
 		a.validateVolumeType(blockDeviceMapping),
 		a.validateVolumeSize(blockDeviceMapping),
+		a.validateKeyFormat(blockDeviceMapping),
 	} {
 		if err != nil {
 			errs = errs.Also(err.ViaField("ebs"))
@@ -250,6 +251,13 @@ func (a *AWS) validateVolumeSize(blockDeviceMapping *BlockDeviceMapping) *apis.F
 		return apis.ErrMissingField("volumeSize")
 	} else if blockDeviceMapping.EBS.VolumeSize.Cmp(minVolumeSize) == -1 || blockDeviceMapping.EBS.VolumeSize.Cmp(maxVolumeSize) == 1 {
 		return apis.ErrOutOfBoundsValue(blockDeviceMapping.EBS.VolumeSize.String(), minVolumeSize.String(), maxVolumeSize.String(), "volumeSize")
+	}
+	return nil
+}
+
+func (a *AWS) validateKeyFormat(blockDeviceMapping *BlockDeviceMapping) *apis.FieldError {
+	if blockDeviceMapping.EBS.KMSKeyID != nil && !strings.HasPrefix(*blockDeviceMapping.EBS.KMSKeyID, "arn:") {
+		return apis.ErrInvalidValue(*blockDeviceMapping.EBS.KMSKeyID, "kmsKeyID", "must be the full ARN of the key")
 	}
 	return nil
 }
