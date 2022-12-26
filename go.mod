@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/Pallinder/go-randomdata v1.2.0
 	github.com/avast/retry-go v3.0.0+incompatible
-	github.com/aws/aws-sdk-go v1.44.154
+	github.com/aws/aws-sdk-go v1.44.167
 	github.com/aws/karpenter-core v0.0.3-0.20221220020318-7a8783c348f8
 	github.com/go-playground/validator/v10 v10.11.1
 	github.com/imdario/mergo v0.3.13
