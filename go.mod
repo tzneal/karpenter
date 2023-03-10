@@ -11,7 +11,7 @@ require (
 	github.com/go-playground/validator/v10 v10.11.2
 	github.com/imdario/mergo v0.3.13
 	github.com/mitchellh/hashstructure/v2 v2.0.2
-	github.com/onsi/ginkgo/v2 v2.8.4
+	github.com/onsi/ginkgo/v2 v2.9.0
 	github.com/onsi/gomega v1.27.2
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pelletier/go-toml/v2 v2.0.7
