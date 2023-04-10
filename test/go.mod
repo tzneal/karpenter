@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/aws/amazon-ec2-spot-interrupter v0.0.10
-	github.com/aws/aws-sdk-go v1.44.234
+	github.com/aws/aws-sdk-go v1.44.239
 	github.com/aws/aws-sdk-go-v2/config v1.18.19
 	github.com/aws/karpenter v0.22.0
 	github.com/aws/karpenter-core v0.27.2-0.20230407175913-394c11ceb55a
