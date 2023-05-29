@@ -3,7 +3,7 @@ module github.com/aws/karpenter/test
 go 1.20
 
 require (
-	github.com/aws/aws-sdk-go v1.44.267
+	github.com/aws/aws-sdk-go v1.44.271
 	github.com/aws/karpenter v0.22.0
 	github.com/aws/karpenter-core v0.28.0-rc.1.0.20230524172501-4418ff4eef78
 	github.com/onsi/ginkgo/v2 v2.9.2
