@@ -170,6 +170,7 @@ func (c CloudProvider) Name() string {
 
 func (c CloudProvider) toNode(machine *v1alpha5.Machine) (*v1.Node, error) {
 	newName := strings.Replace(namesgenerator.GetRandomName(0), "_", "-", -1)
+	newName = fmt.Sprintf("%s-%d", newName, rand.Uint32())
 
 	var instanceTypeName string
 	var instanceTypePrice float64
