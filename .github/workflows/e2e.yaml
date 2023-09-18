@@ -67,7 +67,7 @@ jobs:
     name: suite-${{ inputs.suite }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.git_ref }}
       - if: always() && inputs.event_name == 'workflow_run'
@@ -77,7 +77,7 @@ jobs:
           git_ref: ${{ inputs.git_ref }}
       - uses: ./.github/actions/install-deps
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@v3
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.ACCOUNT_ID }}:role/${{ vars.ROLE_NAME }}
           aws-region: ${{ inputs.region }}
